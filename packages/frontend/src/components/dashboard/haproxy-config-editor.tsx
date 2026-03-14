@@ -17,6 +17,7 @@ import {
 	getHAProxyConfigFileContent,
 	type HAProxyConfigFile,
 	listHAProxyConfigFiles,
+	type RemoteConfigMutationFeedback,
 	reloadHAProxyConfig,
 	saveHAProxyConfigFile,
 } from "@/lib/api";
@@ -26,6 +27,7 @@ import { cn } from "@/lib/utils";
 type HAProxyConfigEditorProps = {
 	selectedNodeId: string | null;
 	selectedNodeName: string | null;
+	selectedNodeIsRemote: boolean;
 	selectedNodeConfigPath: string | null;
 };
 
@@ -52,6 +54,7 @@ function getEditorLanguage(filePath: string | null) {
 export default function HAProxyConfigEditor({
 	selectedNodeId,
 	selectedNodeName,
+	selectedNodeIsRemote,
 	selectedNodeConfigPath,
 }: HAProxyConfigEditorProps) {
 	const [files, setFiles] = useState<HAProxyConfigFile[]>([]);
@@ -69,6 +72,8 @@ export default function HAProxyConfigEditor({
 	const [removing, setRemoving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
+	const [remoteFeedback, setRemoteFeedback] =
+		useState<RemoteConfigMutationFeedback | null>(null);
 	const [lastSaveFailed, setLastSaveFailed] = useState(false);
 	const [supportsHaproxyLanguage, setSupportsHaproxyLanguage] = useState(true);
 	const [debouncedNodeId, setDebouncedNodeId] = useState<string | null>(
@@ -155,7 +160,21 @@ export default function HAProxyConfigEditor({
 	const clearMessages = useCallback(() => {
 		setError(null);
 		setNotice(null);
+		setRemoteFeedback(null);
 	}, []);
+
+	const formatRemoteNotice = useCallback(
+		(feedback: RemoteConfigMutationFeedback | undefined, fallback: string) => {
+			if (!selectedNodeIsRemote || !feedback) {
+				setRemoteFeedback(null);
+				return fallback;
+			}
+
+			setRemoteFeedback(feedback);
+			return `${fallback} (remote validation passed)`;
+		},
+		[selectedNodeIsRemote],
+	);
 
 	useEffect(() => {
 		// Prevent stale file path lookups when changing selected node.
@@ -324,16 +343,22 @@ export default function HAProxyConfigEditor({
 		setLastSaveFailed(false);
 		clearMessages();
 		try {
-			await saveHAProxyConfigFile(
+			const result = await saveHAProxyConfigFile(
 				selectedPath,
 				draftContent,
 				autoReload,
 				debouncedNodeId,
 			);
 			setOriginalContent(draftContent);
-			setNotice(formatReloadMessage(autoReload));
+			setNotice(
+				formatRemoteNotice(
+					result.data?.remoteFeedback,
+					formatReloadMessage(autoReload),
+				),
+			);
 			setLastSaveFailed(false);
-			await loadFiles(selectedPath);
+			await loadFiles(selectedPath, { forceRefresh: true });
+			await loadContent(selectedPath, { forceRefresh: true });
 		} catch (saveError) {
 			setLastSaveFailed(true);
 			setError(
@@ -348,7 +373,9 @@ export default function HAProxyConfigEditor({
 		autoReload,
 		clearMessages,
 		draftContent,
+		formatRemoteNotice,
 		isDirty,
+		loadContent,
 		loadFiles,
 		debouncedNodeId,
 		selectedPath,
@@ -370,9 +397,16 @@ export default function HAProxyConfigEditor({
 		setCreating(true);
 		clearMessages();
 		try {
-			await createHAProxyConfigFile(normalizedPath, "", false, debouncedNodeId);
+			const result = await createHAProxyConfigFile(
+				normalizedPath,
+				"",
+				false,
+				debouncedNodeId,
+			);
 			setNewFilePath("");
-			setNotice("Config file created");
+			setNotice(
+				formatRemoteNotice(result.data?.remoteFeedback, "Config file created"),
+			);
 			await loadFiles(normalizedPath);
 		} catch (createError) {
 			setError(
@@ -386,6 +420,7 @@ export default function HAProxyConfigEditor({
 	}, [
 		canManageNodeConfig,
 		clearMessages,
+		formatRemoteNotice,
 		loadFiles,
 		newFilePath,
 		debouncedNodeId,
@@ -404,13 +439,20 @@ export default function HAProxyConfigEditor({
 		setRemoving(true);
 		clearMessages();
 		try {
-			await deleteHAProxyConfigFile(selectedPath, autoReload, debouncedNodeId);
-			setNotice(
-				autoReload
-					? "Config file deleted and HAProxy reloaded"
-					: "Config file deleted",
+			const result = await deleteHAProxyConfigFile(
+				selectedPath,
+				autoReload,
+				debouncedNodeId,
 			);
-			await loadFiles(null);
+			setNotice(
+				formatRemoteNotice(
+					result.data?.remoteFeedback,
+					autoReload
+						? "Config file deleted and HAProxy reloaded"
+						: "Config file deleted",
+				),
+			);
+			await loadFiles(null, { forceRefresh: true });
 		} catch (deleteError) {
 			setError(
 				deleteError instanceof Error
@@ -424,6 +466,7 @@ export default function HAProxyConfigEditor({
 		autoReload,
 		canManageNodeConfig,
 		clearMessages,
+		formatRemoteNotice,
 		loadFiles,
 		debouncedNodeId,
 		selectedPath,
@@ -506,7 +549,7 @@ export default function HAProxyConfigEditor({
 							) : (
 								<RefreshCw className="h-4 w-4" />
 							)}
-							Reload HAProxy
+							Restart HAProxy
 						</Button>
 					</div>
 				</div>
@@ -609,6 +652,26 @@ export default function HAProxyConfigEditor({
 				{notice && (
 					<div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
 						{notice}
+					</div>
+				)}
+
+				{selectedNodeIsRemote && remoteFeedback && (
+					<div className="rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-800">
+						<p className="font-medium">Remote SSH write status</p>
+						<p>
+							Action: {remoteFeedback.action} | Target:{" "}
+							{remoteFeedback.sshTarget}
+						</p>
+						<p>
+							Container: {remoteFeedback.container} | Path:{" "}
+							{remoteFeedback.path}
+						</p>
+						{remoteFeedback.validationOutput && (
+							<p>Validation: {remoteFeedback.validationOutput}</p>
+						)}
+						<p>
+							Rollback applied: {remoteFeedback.rollbackApplied ? "yes" : "no"}
+						</p>
 					</div>
 				)}
 

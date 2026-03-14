@@ -37,6 +37,7 @@ type NodeConfigDraft = {
 	nodeType: "managed" | "monitored";
 	source: "manual" | "docker" | "remote" | "api";
 	statsUrl: string;
+	socketPath: string;
 	apiUrl: string;
 	haproxyContainerRef: string;
 	sshUser: string;
@@ -82,6 +83,7 @@ function defaultDraft(selectedNode: NodeOutput | null): NodeConfigDraft {
 		statsUrl:
 			selectedNode?.haproxyStatsUrl ??
 			(selectedNode ? `http://${selectedNode.ipAddress}:8404/stats` : ""),
+		socketPath: selectedNode?.haproxySocketPath ?? "",
 		apiUrl:
 			selectedNode?.haproxyApiUrl ??
 			(selectedNode ? `http://${selectedNode.ipAddress}:3000` : ""),
@@ -164,6 +166,15 @@ export default function NodeConfiguration({
 		return statsUrl;
 	}, [draft.statsUrl]);
 
+	const socketPathPreview = useMemo(() => {
+		const socketPath = draft.socketPath.trim();
+		if (!socketPath) {
+			return "-";
+		}
+
+		return socketPath;
+	}, [draft.socketPath]);
+
 	const sshTroubleshootingHint = useMemo(
 		() => getSshTroubleshootingHint(draft, sshStatusMessage),
 		[draft, sshStatusMessage],
@@ -217,6 +228,7 @@ export default function NodeConfiguration({
 				type: draft.nodeType,
 				source: draft.source,
 				haproxyStatsUrl: draft.statsUrl,
+				haproxySocketPath: draft.socketPath,
 				haproxyApiUrl: draft.apiUrl,
 				haproxyContainerRef: draft.haproxyContainerRef,
 				haproxyConfigPath: draft.configPath,
@@ -268,6 +280,7 @@ export default function NodeConfiguration({
 				type: addNodeDraft.type,
 				source: addNodeDraft.source,
 				haproxyStatsUrl: `http://${trimmedIp}:8404/stats`,
+				haproxySocketPath: "",
 				haproxyApiUrl: `http://${trimmedIp}:3000`,
 				sshUser: "root",
 				sshPort: 22,
@@ -637,6 +650,29 @@ export default function NodeConfiguration({
 
 						<div>
 							<p className="mb-1 text-xs uppercase tracking-[0.12em] text-muted-foreground">
+								HAProxy Stats Socket Path
+							</p>
+							<Input
+								value={draft.socketPath}
+								onChange={(event) => {
+									setSavedMessage(null);
+									setDraft((current) => ({
+										...current,
+										socketPath: event.target.value,
+									}));
+								}}
+								placeholder="/var/run/haproxy.sock, /var/lib/haproxy/haproxy.sock, or 127.0.0.1:9999"
+							/>
+							<p className="mt-1 text-xs text-muted-foreground">
+								Set this manually per node. Systemd setups typically use
+								/var/run/haproxy.sock, Docker often uses a volume-backed path
+								like /var/lib/haproxy/haproxy.sock, and TCP socket listeners can
+								be set as host:port (for example 127.0.0.1:9999 or [::1]:9999).
+							</p>
+						</div>
+
+						<div>
+							<p className="mb-1 text-xs uppercase tracking-[0.12em] text-muted-foreground">
 								HAProxy API URL
 							</p>
 							<Input
@@ -773,6 +809,15 @@ export default function NodeConfiguration({
 						</p>
 						<p className="mt-1 font-medium text-foreground">
 							{statsEndpointPreview}
+						</p>
+					</div>
+
+					<div className="rounded-md border border-border bg-background p-3 text-sm">
+						<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+							Socket Path Preview
+						</p>
+						<p className="mt-1 font-medium text-foreground">
+							{socketPathPreview}
 						</p>
 					</div>
 

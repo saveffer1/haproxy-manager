@@ -245,9 +245,7 @@ export default function HAProxyLogViewer({
 
 		const readyForRealtime =
 			Boolean(selectedNodeId) &&
-			(source === "file"
-				? Boolean(filePath.trim())
-				: true);
+			(source === "file" ? Boolean(filePath.trim()) : true);
 		if (!readyForRealtime) {
 			if (pollTimerRef.current !== null) {
 				window.clearInterval(pollTimerRef.current);
@@ -290,9 +288,7 @@ export default function HAProxyLogViewer({
 		: "-";
 	const hasRequiredInputs =
 		Boolean(selectedNodeId) &&
-		(source === "file"
-			? Boolean(filePath.trim())
-			: true);
+		(source === "file" ? Boolean(filePath.trim()) : true);
 
 	return (
 		<div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
@@ -349,7 +345,11 @@ export default function HAProxyLogViewer({
 									type="button"
 									variant="outline"
 									onClick={() => void fetchSelectableFiles()}
-									disabled={loadingSelectableFiles || !selectedNodeId || !filePath.trim()}
+									disabled={
+										loadingSelectableFiles ||
+										!selectedNodeId ||
+										!filePath.trim()
+									}
 								>
 									{loadingSelectableFiles ? (
 										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
