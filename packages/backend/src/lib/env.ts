@@ -30,7 +30,7 @@ export const env = cleanEnv(process.env, {
 	OTEL_URL: url({ default: "http://localhost:4318/v1/traces" }),
 	REDIS_URL: url({ default: "redis://localhost:6379" }),
 	HAPROXY_SOCKET_ENABLED: bool({ default: process.platform !== "win32" }),
-	HAPROXY_SOCKET_PATH: str({ default: "/var/run/haproxy.sock" }),
+	HAPROXY_SOCKET_PATH: str({ default: "127.0.0.1:16669" }),
 	HAPROXY_CONFIG_DIR: str({ default: "./haproxy/conf.d" }),
 	HAPROXY_RELOAD_COMMAND: str({
 		default:

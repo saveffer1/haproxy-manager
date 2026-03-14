@@ -39,10 +39,12 @@ services:
     image: haproxy:3.3-alpine
     volumes:
       - ./haproxy/conf.d:/usr/local/etc/haproxy/conf.d:ro
+      - ./haproxy/haproxy_socket:/var/run/
     command: ["haproxy", "-f", "/usr/local/etc/haproxy/conf.d/"]
     ports:
       - "8080:8080"
       - "127.0.0.1:8404:8404"
+      - "127.0.0.1:16669:16669"
     depends_on:
       - nginx-helloworld
 
@@ -68,3 +70,4 @@ services:
 
 volumes:
   redis_data:
+  haproxy_socket:
