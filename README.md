@@ -172,9 +172,15 @@ GET /haproxy/stats
 GET /haproxy/stats/ui
 ```
 
+Optional query:
+```http
+GET /haproxy/stats/ui?theme=light
+GET /haproxy/stats/ui?theme=dark
+```
+
 Notes:
-- Requires valid API key headers.
 - Requires an active Better Auth session cookie (must be logged in).
+- Does not require API key headers for this endpoint.
 - Proxies the internal HAProxy stats page with basic auth credentials from backend environment variables.
 
 Response:

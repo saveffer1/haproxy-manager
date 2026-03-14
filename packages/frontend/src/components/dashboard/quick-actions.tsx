@@ -1,12 +1,15 @@
 import { RefreshCw, ShieldCheck, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { env } from "@/lib/env";
 
 type QuickActionsProps = {
 	onOpenStats: () => void;
 };
 
 export default function QuickActions({ onOpenStats }: QuickActionsProps) {
+	const openApiDocsUrl = new URL("/openapi", env.VITE_BACKEND_URL).toString();
+
 	return (
 		<Card className="animate-fade-up">
 			<CardHeader>
@@ -24,7 +27,7 @@ export default function QuickActions({ onOpenStats }: QuickActionsProps) {
 				<Button
 					className="w-full justify-start"
 					variant="outline"
-					onClick={() => window.open("http://localhost:3000/openapi", "_blank")}
+					onClick={() => window.open(openApiDocsUrl, "_blank")}
 				>
 					<TerminalSquare className="mr-2 h-4 w-4" />
 					Open API Docs

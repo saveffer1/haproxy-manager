@@ -1,5 +1,6 @@
 import { AlertTriangle, Server, ShieldCheck, Users } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { StatsCard } from "@/components/dashboard/stats-card";
 import { type DashboardTab, Sidebar } from "@/components/layout/sidebar";
@@ -10,7 +11,9 @@ import {
 	getDashboardSummary,
 	getHAProxyStatsDashboardHtml,
 } from "@/lib/api";
+import { env } from "@/lib/env";
 import { useAuth } from "@/providers/auth-provider";
+import { useTheme } from "@/providers/theme-provider";
 
 const QuickActions = lazy(() => import("@/components/dashboard/quick-actions"));
 
@@ -22,13 +25,29 @@ const initialState: DashboardSummary = {
 
 export default function DashboardPage() {
 	const { logout } = useAuth();
+	const { theme } = useTheme();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const [mobileOpen, setMobileOpen] = useState(false);
-	const [activeTab, setActiveTab] = useState<DashboardTab>("overview");
 	const [loading, setLoading] = useState(true);
 	const [summary, setSummary] = useState<DashboardSummary>(initialState);
-	const [statsHtml, setStatsHtml] = useState<string | null>(null);
 	const [statsError, setStatsError] = useState<string | null>(null);
 	const [statsLoading, setStatsLoading] = useState(false);
+
+	const activeTab = useMemo<DashboardTab>(() => {
+		const tab = searchParams.get("tab");
+		return tab === "stats" ? "stats" : "overview";
+	}, [searchParams]);
+
+	const setActiveTab = useCallback(
+		(tab: DashboardTab) => {
+			setSearchParams((current) => {
+				const next = new URLSearchParams(current);
+				next.set("tab", tab);
+				return next;
+			});
+		},
+		[setSearchParams],
+	);
 
 	useEffect(() => {
 		let mounted = true;
@@ -52,7 +71,7 @@ export default function DashboardPage() {
 	}, []);
 
 	useEffect(() => {
-		if (activeTab !== "stats" || statsHtml || statsLoading) {
+		if (activeTab !== "stats" || statsLoading) {
 			return;
 		}
 
@@ -60,11 +79,9 @@ export default function DashboardPage() {
 		setStatsLoading(true);
 		setStatsError(null);
 
-		getHAProxyStatsDashboardHtml()
-			.then((html) => {
-				if (mounted) {
-					setStatsHtml(html);
-				}
+		getHAProxyStatsDashboardHtml(theme)
+			.then(() => {
+				// We don't need to store HTML; the iframe will load the stats UI directly.
 			})
 			.catch((error) => {
 				if (mounted) {
@@ -84,7 +101,7 @@ export default function DashboardPage() {
 		return () => {
 			mounted = false;
 		};
-	}, [activeTab, statsHtml, statsLoading]);
+	}, [activeTab, statsLoading, theme]);
 
 	const statsCards = useMemo(
 		() => [
@@ -123,6 +140,11 @@ export default function DashboardPage() {
 	const handleLogout = async () => {
 		await logout();
 	};
+
+	const statsUiSrc = useMemo(() => {
+		const query = new URLSearchParams({ theme });
+		return `${env.VITE_BACKEND_URL}/haproxy/stats/ui?${query.toString()}`;
+	}, [theme]);
 
 	return (
 		<div className="flex min-h-screen bg-background">
@@ -234,10 +256,10 @@ export default function DashboardPage() {
 								</div>
 							)}
 
-							{statsHtml && (
+							{!statsError && (
 								<iframe
 									title="HAProxy Stats Dashboard"
-									srcDoc={statsHtml}
+									src={statsUiSrc}
 									className="h-[calc(100vh-180px)] w-full rounded-lg border border-border bg-white"
 									sandbox="allow-same-origin allow-scripts allow-forms"
 								/>

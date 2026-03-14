@@ -27,6 +27,10 @@ function getBearerToken(authorizationHeader: string | null) {
 }
 
 // Initialize Elysia app with plugins
+const corsOrigins = env.BETTER_AUTH_TRUSTED_ORIGINS.split(",")
+	.map((origin) => origin.trim())
+	.filter(Boolean);
+
 const app = new Elysia()
 	.use(
 		logixlysia({
@@ -43,17 +47,28 @@ const app = new Elysia()
 			},
 		}),
 	)
-	.use(cors())
+	.use(
+		cors({
+			origin: corsOrigins,
+			credentials: true,
+		}),
+	)
 	.use(openapi())
 	.use(apiKeySupportPlugin())
 	.onBeforeHandle((ctx) => {
 		const { request, set } = ctx;
+		const requestPath = new URL(request.url).pathname;
 		const keyFromHeader = request.headers.get("x-api-key");
 		const keyFromBearer = getBearerToken(request.headers.get("authorization"));
 		const resolvedKey = keyFromHeader ?? keyFromBearer;
 
 		if (request.method === "OPTIONS") {
 			set.status = 204;
+			return;
+		}
+
+		// HAProxy stats UI is protected by Better Auth session in its controller.
+		if (requestPath === "/haproxy/stats/ui") {
 			return;
 		}
 

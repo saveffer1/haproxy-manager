@@ -9,11 +9,41 @@ import {
 } from "../services/haproxyService";
 import type { ApiResponse } from "../types/common";
 
+type ThemeMode = "light" | "dark";
+
+function getStatsThemeCss(theme: ThemeMode) {
+	if (theme !== "dark") {
+		return "";
+	}
+
+	return `
+<style id="haproxy-manager-theme-override">
+body { background: #0f172a !important; color: #e2e8f0 !important; }
+h1, h2, h3, th, td, li, p { color: #e2e8f0 !important; }
+a, a:visited, a:hover { color: #67e8f9 !important; }
+.hr { border-color: #334155 !important; }
+table.tbl td, table.tbl th { border-color: #334155 !important; }
+.titre, .total { background: #0f766e !important; color: #ecfeff !important; }
+.frontend, .backend { background: #1e293b !important; }
+.socket { background: #334155 !important; }
+.active_up, .backup_up { background: #14532d !important; color: #dcfce7 !important; }
+.active_down, .backup_down { background: #7f1d1d !important; color: #fee2e2 !important; }
+.active_going_up, .backup_going_up { background: #78350f !important; color: #fef3c7 !important; }
+.active_going_down, .backup_going_down { background: #4c1d95 !important; color: #ede9fe !important; }
+.active_nolb, .backup_nolb, .active_draining, .backup_draining { background: #0c4a6e !important; color: #e0f2fe !important; }
+.active_no_check, .backup_no_check, .maintain { background: #334155 !important; color: #e2e8f0 !important; }
+</style>
+`;
+}
+
 export function createHAProxyController() {
 	return (
 		new Elysia({ prefix: "/haproxy" })
 			.get("/stats/ui", async ({ request, set }) => {
 				try {
+					const themeParam = new URL(request.url).searchParams.get("theme");
+					const theme: ThemeMode = themeParam === "dark" ? "dark" : "light";
+
 					const authApi = auth.api as {
 						getSession: (args: {
 							headers: Headers;
@@ -51,8 +81,11 @@ export function createHAProxyController() {
 					const contentType =
 						upstream.headers.get("content-type") ?? "text/html; charset=utf-8";
 					const html = await upstream.text();
+					const themedHtml = html.includes("</head>")
+						? html.replace("</head>", `${getStatsThemeCss(theme)}</head>`)
+						: `${getStatsThemeCss(theme)}${html}`;
 
-					return new Response(html, {
+					return new Response(themedHtml, {
 						headers: {
 							"Content-Type": contentType,
 							"Cache-Control": "no-store",

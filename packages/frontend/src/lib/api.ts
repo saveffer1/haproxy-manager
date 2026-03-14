@@ -44,6 +44,8 @@ export type DashboardSummary = {
 	error?: string;
 };
 
+type ThemeMode = "light" | "dark";
+
 type BetterAuthDefaultUserResponse = {
 	success: boolean;
 	data?: {
@@ -227,8 +229,12 @@ async function postJsonRaw<T>(path: string, payload: unknown): Promise<T> {
 	return (await response.json()) as T;
 }
 
-async function apiFetchText(path: string): Promise<string> {
-	const apiKeyHeaders = buildApiKeyHeaders();
+async function apiFetchText(
+	path: string,
+	options: { includeApiKey?: boolean } = {},
+): Promise<string> {
+	const includeApiKey = options.includeApiKey ?? true;
+	const apiKeyHeaders = includeApiKey ? buildApiKeyHeaders() : {};
 
 	const response = await fetch(`${env.VITE_BACKEND_URL}${path}`, {
 		headers: {
@@ -378,6 +384,9 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 	};
 }
 
-export async function getHAProxyStatsDashboardHtml() {
-	return apiFetchText("/haproxy/stats/ui");
+export async function getHAProxyStatsDashboardHtml(theme: ThemeMode) {
+	const query = new URLSearchParams({ theme });
+	return apiFetchText(`/haproxy/stats/ui?${query.toString()}`, {
+		includeApiKey: false,
+	});
 }
