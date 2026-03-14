@@ -6,7 +6,14 @@
 		"useIgnoreFile": false
 	},
 	"files": {
-		"ignoreUnknown": false
+		"ignoreUnknown": false,
+		"includes": [
+			"**",
+			"!!**/node_modules",
+			"!!**/haproxy",
+			"!!**/dist",
+			"!!**/build"
+		]
 	},
 	"formatter": {
 		"enabled": true,
@@ -25,7 +32,7 @@
 			"quoteStyle": "double",
 			"trailingCommas": "all",
 			"jsxQuoteStyle": "double",
-			"arrowParentheses":"always",
+			"arrowParentheses": "always",
 			"bracketSameLine": false,
 			"bracketSpacing": true,
 			"quoteProperties": "asNeeded",
@@ -34,7 +41,12 @@
 	},
 	"json": {
 		"formatter": {
-		"trailingCommas": "none"
+			"trailingCommas": "none"
+		}
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
 		}
 	},
 	"assist": {

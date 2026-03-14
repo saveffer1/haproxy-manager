@@ -1,11 +1,6 @@
 import { Elysia, t } from "elysia";
 import { nodeService } from "../services/nodeService";
-import type {
-	ApiResponse,
-	CreateNodeInput,
-	NodeOutput,
-	UpdateNodeInput,
-} from "../types/common";
+import type { ApiResponse, NodeOutput } from "../types/common";
 
 export function createNodeController() {
 	return (

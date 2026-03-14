@@ -5,10 +5,26 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Elysia } from "elysia";
 import logixlysia from "logixlysia";
-import { env } from "./lib/env";
+import { createAuthController } from "./controllers/authController";
+import { createHAProxyController } from "./controllers/haproxyController";
 import { createHealthController } from "./controllers/healthController";
 import { createNodeController } from "./controllers/nodeController";
-import { createHAProxyController } from "./controllers/haproxyController";
+import { apiKeySupportPlugin } from "./lib/apiKeySupport";
+import { auth, ensureDefaultAdminUser } from "./lib/auth";
+import { env } from "./lib/env";
+
+function getBearerToken(authorizationHeader: string | null) {
+	if (!authorizationHeader) {
+		return null;
+	}
+
+	const [scheme, value] = authorizationHeader.split(" ");
+	if (scheme?.toLowerCase() !== "bearer" || !value) {
+		return null;
+	}
+
+	return value;
+}
 
 // Initialize Elysia app with plugins
 const app = new Elysia()
@@ -29,6 +45,34 @@ const app = new Elysia()
 	)
 	.use(cors())
 	.use(openapi())
+	.use(apiKeySupportPlugin())
+	.onBeforeHandle((ctx) => {
+		const { request, set } = ctx;
+		const keyFromHeader = request.headers.get("x-api-key");
+		const keyFromBearer = getBearerToken(request.headers.get("authorization"));
+		const resolvedKey = keyFromHeader ?? keyFromBearer;
+
+		if (request.method === "OPTIONS") {
+			set.status = 204;
+			return;
+		}
+
+		if (!resolvedKey) {
+			set.status = 401;
+			return {
+				success: false,
+				error: "Missing API key. Send x-api-key or Authorization: Bearer <key>",
+			};
+		}
+
+		if (resolvedKey !== env.API_KEY) {
+			set.status = 403;
+			return {
+				success: false,
+				error: "Invalid API key",
+			};
+		}
+	})
 	.use(
 		opentelemetry({
 			serviceName: "haproxy-manager-api",
@@ -39,12 +83,15 @@ const app = new Elysia()
 			),
 		}),
 	)
+	.all("/api/auth", ({ request }) => auth.handler(request))
+	.all("/api/auth/*", ({ request }) => auth.handler(request))
+	.use(createAuthController())
 	// Register controllers
 	.use(createHealthController())
 	.use(createNodeController())
 	.use(createHAProxyController())
 	.listen(3000);
 
-console.log("🚀 HAProxy Manager API running on http://localhost:3000");
+void ensureDefaultAdminUser();
 
 export type App = typeof app;

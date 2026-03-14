@@ -1,0 +1,65 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
+
+/* biome-ignore lint: tailwind directives */
+@tailwind base;
+/* biome-ignore lint: tailwind directives */
+@tailwind components;
+/* biome-ignore lint: tailwind directives */
+@tailwind utilities;
+
+:root {
+	--background: 204 33% 98%;
+	--foreground: 210 30% 14%;
+	--card: 0 0% 100%;
+	--card-foreground: 210 30% 14%;
+	--primary: 193 79% 37%;
+	--primary-foreground: 0 0% 100%;
+	--secondary: 193 45% 92%;
+	--secondary-foreground: 194 67% 21%;
+	--muted: 204 28% 93%;
+	--muted-foreground: 208 13% 38%;
+	--accent: 171 54% 86%;
+	--accent-foreground: 171 74% 20%;
+	--border: 206 26% 85%;
+	--input: 206 26% 85%;
+	--ring: 193 79% 37%;
+	--radius: 0.85rem;
+}
+
+.dark {
+	--background: 210 24% 11%;
+	--foreground: 200 21% 93%;
+	--card: 210 24% 14%;
+	--card-foreground: 200 21% 93%;
+	--primary: 188 85% 45%;
+	--primary-foreground: 210 30% 10%;
+	--secondary: 212 24% 20%;
+	--secondary-foreground: 193 72% 85%;
+	--muted: 213 20% 18%;
+	--muted-foreground: 210 10% 69%;
+	--accent: 174 40% 23%;
+	--accent-foreground: 167 63% 82%;
+	--border: 213 15% 27%;
+	--input: 213 15% 27%;
+	--ring: 188 85% 45%;
+}
+
+* {
+	@apply border-border;
+}
+
+html,
+body,
+#root {
+	min-height: 100%;
+}
+
+body {
+	@apply bg-background text-foreground antialiased;
+	font-family: "Manrope", "Segoe UI", Tahoma, sans-serif;
+	background-image: radial-gradient(
+		circle at 0% -20%,
+		hsl(var(--primary) / 0.08),
+		transparent 45%
+	);
+}

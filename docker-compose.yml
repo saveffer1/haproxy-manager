@@ -37,10 +37,12 @@ services:
 
   haproxy:
     image: haproxy:3.3-alpine
-    network_mode: host
     volumes:
       - ./haproxy/conf.d:/usr/local/etc/haproxy/conf.d:ro
     command: ["haproxy", "-f", "/usr/local/etc/haproxy/conf.d/"]
+    ports:
+      - "8080:8080"
+      - "127.0.0.1:8404:8404"
     depends_on:
       - nginx-helloworld
 

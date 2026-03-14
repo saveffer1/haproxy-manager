@@ -31,18 +31,37 @@ export type HAProxyBackend = {
 };
 
 export class HAProxyService {
-	private socketPath = "/var/run/haproxy.sock";
+	private socketPath = env.HAPROXY_SOCKET_PATH;
+	private socketEnabled = env.HAPROXY_SOCKET_ENABLED;
+
+	private isExpectedSocketError(error: unknown) {
+		if (!(error instanceof Error)) {
+			return false;
+		}
+
+		const code = (error as Error & { code?: string }).code;
+		return (
+			code === "ENOENT" ||
+			code === "ECONNREFUSED" ||
+			code === "EACCES" ||
+			error.message.includes("socket is disabled")
+		);
+	}
 
 	/**
 	 * Connect to HAProxy stats socket and execute a command
 	 * Returns the raw response from HAProxy
 	 */
 	private async executeSocketCommand(command: string): Promise<string> {
+		if (!this.socketEnabled) {
+			throw new Error("HAProxy socket is disabled by configuration");
+		}
+
 		try {
-			const net = await import("net");
+			const net = await import("node:net");
 			return new Promise((resolve, reject) => {
 				const socket = net.createConnection(this.socketPath, () => {
-					socket.write(command + "\n");
+					socket.write(`${command}\n`);
 					socket.end();
 				});
 
@@ -66,7 +85,11 @@ export class HAProxyService {
 				}, 5000);
 			});
 		} catch (error) {
-			console.error("Socket connection error:", error);
+			if (this.isExpectedSocketError(error)) {
+				throw error;
+			}
+
+			console.error("Unexpected HAProxy socket error:", error);
 			throw new Error("Failed to connect to HAProxy socket");
 		}
 	}
@@ -95,8 +118,8 @@ export class HAProxyService {
 				return index !== -1 ? firstDataLine[index]?.trim() : "0";
 			};
 
-			const activeConn = parseInt(getPsvValue("scur")) || 0;
-			const connectRate = parseInt(getPsvValue("rate")) || 0;
+			const activeConn = parseInt(getPsvValue("scur"), 10) || 0;
+			const connectRate = parseInt(getPsvValue("rate"), 10) || 0;
 
 			return {
 				status: "online",
@@ -106,7 +129,10 @@ export class HAProxyService {
 				pids: process.pid.toString(),
 			};
 		} catch (error) {
-			console.error("Error fetching HAProxy stats:", error);
+			if (!this.isExpectedSocketError(error)) {
+				console.error("Error fetching HAProxy stats:", error);
+			}
+
 			// Return fallback data if socket unavailable
 			return {
 				status: "offline",
@@ -159,9 +185,9 @@ export class HAProxyService {
 				const pxname = values[headers.indexOf("pxname")]?.trim();
 				const svname = values[headers.indexOf("svname")]?.trim();
 				const status = values[headers.indexOf("status")]?.trim();
-				const scur = parseInt(values[headers.indexOf("scur")]?.trim()) || 0;
-				const bin = parseInt(values[headers.indexOf("bin")]?.trim()) || 0;
-				const bout = parseInt(values[headers.indexOf("bout")]?.trim()) || 0;
+				const scur = parseInt(values[headers.indexOf("scur")]?.trim(), 10) || 0;
+				const bin = parseInt(values[headers.indexOf("bin")]?.trim(), 10) || 0;
+				const bout = parseInt(values[headers.indexOf("bout")]?.trim(), 10) || 0;
 
 				if (svname !== "BACKEND" && pxname) {
 					if (!backends.has(pxname)) {
@@ -171,7 +197,7 @@ export class HAProxyService {
 						});
 					}
 
-					backends.get(pxname)!.servers.push({
+					backends.get(pxname)?.servers.push({
 						name: svname,
 						status: status || "unknown",
 						sessions: scur,
@@ -183,7 +209,10 @@ export class HAProxyService {
 
 			return Array.from(backends.values());
 		} catch (error) {
-			console.error("Error fetching HAProxy backends:", error);
+			if (!this.isExpectedSocketError(error)) {
+				console.error("Error fetching HAProxy backends:", error);
+			}
+
 			return [];
 		}
 	}
@@ -191,7 +220,11 @@ export class HAProxyService {
 	/**
 	 * Enable/Disable a server via socket command
 	 */
-	async setServerState(backend: string, server: string, state: "enable" | "disable"): Promise<boolean> {
+	async setServerState(
+		backend: string,
+		server: string,
+		state: "enable" | "disable",
+	): Promise<boolean> {
 		try {
 			const command = `${state} server ${backend}/${server}`;
 			const response = await this.executeSocketCommand(command);

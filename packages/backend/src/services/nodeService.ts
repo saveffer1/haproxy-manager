@@ -99,7 +99,7 @@ export class NodeService {
 				throw new Error("Node not found");
 			}
 
-			const result = await db.delete(nodes).where(eq(nodes.id, id));
+			const _result = await db.delete(nodes).where(eq(nodes.id, id));
 			return true;
 		} catch (error) {
 			console.error("Error deleting node:", error);

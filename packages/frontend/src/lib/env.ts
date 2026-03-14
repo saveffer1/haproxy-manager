@@ -1,6 +1,16 @@
-import { cleanEnv, str } from "envalid";
+type FrontendEnv = {
+	VITE_BACKEND_URL: string;
+	VITE_API_KEY: string;
+};
 
-export const env = cleanEnv(process.env, {
-    NODE_ENV: str({ choices: ['development', 'test', 'production', 'staging'] }),
-    API_KEY: str(),
-})
+const defaultBackendUrl =
+	typeof window === "undefined"
+		? "http://localhost:3000"
+		: `${window.location.protocol}//${window.location.hostname}:3000`;
+
+export const env: FrontendEnv = {
+	VITE_BACKEND_URL:
+		(import.meta.env.VITE_BACKEND_URL as string | undefined) ??
+		defaultBackendUrl,
+	VITE_API_KEY: (import.meta.env.VITE_API_KEY as string | undefined) ?? "",
+};

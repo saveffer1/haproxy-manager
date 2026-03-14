@@ -1,4 +1,6 @@
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
+import { auth } from "../lib/auth";
+import { env } from "../lib/env";
 import {
 	type HAProxyBackend,
 	type HAProxyConfig,
@@ -10,6 +12,63 @@ import type { ApiResponse } from "../types/common";
 export function createHAProxyController() {
 	return (
 		new Elysia({ prefix: "/haproxy" })
+			.get("/stats/ui", async ({ request, set }) => {
+				try {
+					const authApi = auth.api as {
+						getSession: (args: {
+							headers: Headers;
+						}) => Promise<{ user?: unknown } | null>;
+					};
+
+					const session = await authApi.getSession({
+						headers: request.headers,
+					});
+					if (!session?.user) {
+						set.status = 401;
+						return {
+							success: false,
+							error: "Authentication required",
+						};
+					}
+
+					const basicAuth = Buffer.from(
+						`${env.HAPROXY_STATS_USERNAME}:${env.HAPROXY_STATS_PASSWORD}`,
+					).toString("base64");
+					const upstream = await fetch(env.HAPROXY_STATS_URL, {
+						headers: {
+							Authorization: `Basic ${basicAuth}`,
+						},
+					});
+
+					if (!upstream.ok) {
+						set.status = 502;
+						return {
+							success: false,
+							error: `HAProxy stats upstream returned ${upstream.status}`,
+						};
+					}
+
+					const contentType =
+						upstream.headers.get("content-type") ?? "text/html; charset=utf-8";
+					const html = await upstream.text();
+
+					return new Response(html, {
+						headers: {
+							"Content-Type": contentType,
+							"Cache-Control": "no-store",
+						},
+					});
+				} catch (error) {
+					set.status = 500;
+					return {
+						success: false,
+						error:
+							error instanceof Error
+								? error.message
+								: "Failed to load HAProxy stats dashboard",
+					};
+				}
+			})
 			// Get HAProxy stats - connects to socket and fetches real-time stats
 			.get("/stats", async (): Promise<ApiResponse<HAProxyStats>> => {
 				try {

@@ -94,7 +94,7 @@ Once running, you can access:
 | **Frontend** | http://localhost:5173 | HAProxy Manager UI |
 | **Backend API** | http://localhost:3000 | REST API Server |
 | **API Docs** | http://localhost:3000/swagger | OpenAPI Documentation |
-| **HAProxy Stats** | http://localhost:8404/stats | HAProxy Stats Dashboard |
+| **HAProxy Stats Screen** | http://localhost:5173/dashboard/stats | In-app HAProxy Stats (login required) |
 | **Jaeger Tracing** | http://localhost:16686 | Distributed Tracing UI |
 
 ## 📖 API Documentation
@@ -167,6 +167,16 @@ GET /api/nodes/:id
 GET /haproxy/stats
 ```
 
+#### Get HAProxy Stats Dashboard HTML (for frontend screen)
+```http
+GET /haproxy/stats/ui
+```
+
+Notes:
+- Requires valid API key headers.
+- Requires an active Better Auth session cookie (must be logged in).
+- Proxies the internal HAProxy stats page with basic auth credentials from backend environment variables.
+
 Response:
 ```json
 {
@@ -235,7 +245,8 @@ docker-compose logs -f    # View logs
 The HAProxy configuration is located at `./haproxy/haproxy.cfg` and includes:
 
 ### Features
-- **Stats Dashboard**: HTTP stats interface on port 8404
+- **Stats Dashboard Security**: Stats endpoint is protected with basic auth and only accepts localhost source traffic
+- **In-App Stats Screen**: Dashboard page fetches stats UI via backend proxy endpoint (`/haproxy/stats/ui`)
 - **Load Balancing**: Round-robin by default
 - **Health Checks**: HTTP GET checks on configured backends
 - **Logging**: Structured HTTP logging
@@ -300,6 +311,9 @@ API_KEY=your-secure-api-key-here
 DATABASE_URL=postgres://postgres:password@localhost:5432/haproxy_db
 OTEL_URL=http://localhost:4318/v1/traces
 REDIS_URL=redis://localhost:6379
+HAPROXY_STATS_URL=http://localhost:8404/stats
+HAPROXY_STATS_USERNAME=admin
+HAPROXY_STATS_PASSWORD=admin12345
 ```
 
 ## 🐳 Docker Services
@@ -310,7 +324,7 @@ The docker-compose.yml includes:
 |---------|-------|------|---------|
 | postgres | postgres:17-alpine | 5432 | Primary database |
 | redis | redis:alpine | 6379 | Session/cache storage |
-| haproxy | haproxy:2.8-alpine | 80, 8404 | Load balancer |
+| haproxy | haproxy:3.3-alpine | 8080, 127.0.0.1:8404 | Load balancer |
 | otel-collector | jaegertracing/all-in-one | 16686, 4318 | Tracing and observability |
 | backend | oven/bun:alpine | 3000 | API server |
 | frontend | oven/bun:alpine | 5173 | Web UI |
