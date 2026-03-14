@@ -26,6 +26,7 @@ export type CreateNodeInput = {
 	logStrategy?: "docker" | "file" | "journald";
 	logPath?: string;
 	haproxyStatsUrl?: string;
+	haproxySocketPath?: string;
 	haproxyApiUrl?: string;
 	haproxyContainerRef?: string;
 	haproxyConfigPath?: string;
@@ -47,6 +48,7 @@ export type NodeOutput = {
 	logStrategy: "docker" | "file" | "journald";
 	logPath: string | null;
 	haproxyStatsUrl: string | null;
+	haproxySocketPath: string | null;
 	haproxyApiUrl: string | null;
 	haproxyContainerRef: string | null;
 	haproxyConfigPath: string | null;

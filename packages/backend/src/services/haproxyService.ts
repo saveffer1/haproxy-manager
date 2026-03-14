@@ -26,8 +26,56 @@ export type HAProxyStats = {
 	connections_rate: number;
 	version?: string;
 	pids?: string;
+	dataSource?: HAProxyStatsDataSource;
+	snapshot?: HAProxyStatsSnapshot;
 	nodeRuntime?: HAProxyNodeRuntimeDetails;
 	warning?: string;
+};
+
+export type HAProxyStatsDataSource = "socket" | "url" | "none";
+export type HAProxyStatsRequestedSource = "auto" | "socket" | "url";
+
+export type HAProxyStatsSnapshot = {
+	collectedAt: string;
+	totals: {
+		activeSessions: number;
+		connectionsRate: number;
+		bytesIn: number;
+		bytesOut: number;
+		queueCurrent: number;
+		queueMax: number;
+		errors: number;
+	};
+	httpResponses: {
+		xx2: number;
+		xx3: number;
+		xx4: number;
+		xx5: number;
+		other: number;
+	};
+	health: {
+		up: number;
+		down: number;
+		other: number;
+	};
+	servers: Array<{
+		proxy: string;
+		server: string;
+		status: string;
+		activeSessions: number;
+		connectionsRate: number;
+		bytesIn: number;
+		bytesOut: number;
+		errors: number;
+	}>;
+};
+
+export type HAProxyStatsCapabilities = {
+	supportsSocket: boolean;
+	supportsUrl: boolean;
+	availableViews: Array<"graph" | "classic">;
+	defaultSource: "socket" | "url" | "none";
+	notes: string[];
 };
 
 export type HAProxyNodeRuntimeDetailItem = {
@@ -91,6 +139,18 @@ export type HAProxyConfigFile = {
 	updatedAt: string;
 };
 
+export type RemoteConfigMutationFeedback = {
+	mode: "remote";
+	action: "save" | "create" | "delete";
+	sshTarget: string;
+	container: string;
+	path: string;
+	validation: "passed";
+	rollbackApplied: boolean;
+	details: string[];
+	validationOutput?: string;
+};
+
 export type HAProxyLogSource = "container" | "file";
 
 export type HAProxyLogContainer = {
@@ -117,6 +177,7 @@ export type HAProxyNodeRuntimeConfig = {
 	source: "manual" | "docker" | "remote" | "api";
 	logStrategy: "docker" | "file" | "journald";
 	haproxyStatsUrl: string | null;
+	haproxySocketPath: string | null;
 	haproxyApiUrl: string | null;
 	haproxyContainerRef: string | null;
 	haproxyConfigPath: string | null;
@@ -133,10 +194,71 @@ type DockerContainerListItem = {
 	status: string;
 };
 
+type HAProxySocketTarget =
+	| { kind: "unix"; path: string }
+	| { kind: "tcp"; host: string; port: number };
+
 export class HAProxyService {
 	private socketPath = env.HAPROXY_SOCKET_PATH;
 	private socketEnabled = env.HAPROXY_SOCKET_ENABLED;
 	private remoteConfigCacheTtlSec = 30;
+
+	private resolveSocketPath(nodeConfig?: HAProxyNodeRuntimeConfig) {
+		if (nodeConfig) {
+			const scopedPath = nodeConfig.haproxySocketPath?.trim();
+			return scopedPath || null;
+		}
+
+		if (!this.socketEnabled) {
+			return null;
+		}
+
+		const globalPath = this.socketPath.trim();
+		return globalPath || null;
+	}
+
+	private resolveSocketTarget(rawSocketPath: string): HAProxySocketTarget {
+		const normalized = rawSocketPath.trim();
+		if (!normalized) {
+			throw new Error("HAProxy socket path is not configured");
+		}
+
+		if (normalized.startsWith("/")) {
+			return {
+				kind: "unix",
+				path: normalized,
+			};
+		}
+
+		const bracketIpv6Match = normalized.match(/^\[([^\]]+)\]:(\d{1,5})$/);
+		if (bracketIpv6Match?.[1] && bracketIpv6Match[2]) {
+			const port = Number.parseInt(bracketIpv6Match[2], 10);
+			if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+				return {
+					kind: "tcp",
+					host: bracketIpv6Match[1],
+					port,
+				};
+			}
+		}
+
+		const hostPortMatch = normalized.match(/^([^\s:]+):(\d{1,5})$/);
+		if (hostPortMatch?.[1] && hostPortMatch[2]) {
+			const port = Number.parseInt(hostPortMatch[2], 10);
+			if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+				return {
+					kind: "tcp",
+					host: hostPortMatch[1],
+					port,
+				};
+			}
+		}
+
+		return {
+			kind: "unix",
+			path: normalized,
+		};
+	}
 
 	private shouldUseSshForConfig(nodeConfig?: HAProxyNodeRuntimeConfig) {
 		return Boolean(nodeConfig && !nodeConfig.isLocalService);
@@ -144,6 +266,30 @@ export class HAProxyService {
 
 	private quoteForSh(value: string) {
 		return `'${value.replace(/'/g, `'"'"'`)}'`;
+	}
+
+	private resolveSshTarget(nodeConfig: HAProxyNodeRuntimeConfig) {
+		const host = nodeConfig.ipAddress.trim();
+		if (!host) {
+			throw new Error("Node host is required for SSH operations");
+		}
+
+		const user = (nodeConfig.sshUser?.trim() || "root").replace(/\s+/g, "");
+		const defaultPort = Number.parseInt(env.SSH_DEFAULT_PORT, 10);
+		const requestedPort = Number.isFinite(nodeConfig.sshPort)
+			? Number(nodeConfig.sshPort)
+			: defaultPort;
+		const port = Number.isFinite(requestedPort)
+			? Math.max(1, requestedPort)
+			: 22;
+		const timeoutSec = Number.parseInt(env.SSH_CONNECT_TIMEOUT_SEC, 10) || 8;
+
+		return {
+			host,
+			user,
+			port,
+			timeoutSec: Math.max(timeoutSec, 1),
+		};
 	}
 
 	private getRemoteConfigCacheKey(
@@ -179,6 +325,29 @@ export class HAProxyService {
 		} catch {
 			// Ignore cache write failures; requests should still succeed without cache.
 		}
+	}
+
+	private async deleteCacheKeys(keys: string[]): Promise<void> {
+		if (keys.length === 0) {
+			return;
+		}
+
+		try {
+			await Promise.all(keys.map((key) => redis.del(key)));
+		} catch {
+			// Ignore cache invalidation failures; requests should still succeed without cache.
+		}
+	}
+
+	private getRemoteConfigContentCacheKey(
+		nodeConfig: HAProxyNodeRuntimeConfig,
+		relativePath: string,
+	) {
+		return this.getRemoteConfigCacheKey(nodeConfig, `content:${relativePath}`);
+	}
+
+	private getRemoteConfigListCacheKey(nodeConfig: HAProxyNodeRuntimeConfig) {
+		return this.getRemoteConfigCacheKey(nodeConfig, "file-list");
 	}
 
 	private resolveRemoteConfigRoot(nodeConfig: HAProxyNodeRuntimeConfig) {
@@ -242,20 +411,7 @@ export class HAProxyService {
 		nodeConfig: HAProxyNodeRuntimeConfig,
 		command: string,
 	) {
-		const host = nodeConfig.ipAddress.trim();
-		if (!host) {
-			throw new Error("Node host is required for SSH operations");
-		}
-
-		const user = (nodeConfig.sshUser?.trim() || "root").replace(/\s+/g, "");
-		const defaultPort = Number.parseInt(env.SSH_DEFAULT_PORT, 10);
-		const requestedPort = Number.isFinite(nodeConfig.sshPort)
-			? Number(nodeConfig.sshPort)
-			: defaultPort;
-		const port = Number.isFinite(requestedPort)
-			? Math.max(1, requestedPort)
-			: 22;
-		const timeoutSec = Number.parseInt(env.SSH_CONNECT_TIMEOUT_SEC, 10) || 8;
+		const { host, user, port, timeoutSec } = this.resolveSshTarget(nodeConfig);
 		const { privateKeyPath } = await ensureSshKeyPair();
 		const remoteCommand = `sh -lc ${this.quoteForSh(command)}`;
 
@@ -279,7 +435,7 @@ export class HAProxyService {
 					remoteCommand,
 				],
 				{
-					timeout: Math.max(timeoutSec, 1) * 1000 + 3000,
+					timeout: timeoutSec * 1000 + 3000,
 					windowsHide: true,
 				},
 			);
@@ -288,13 +444,149 @@ export class HAProxyService {
 		} catch (error) {
 			const execError = error as ExecError;
 			const stderr = execError.stderr?.trim() || "";
+			const stdout = execError.stdout?.trim() || "";
 			const rawMessage =
 				error instanceof Error ? error.message : "SSH command failed";
-			const details = stderr || rawMessage;
+			const details = [stderr, stdout, rawMessage]
+				.filter((item) => item.length > 0)
+				.join(" | ");
 			throw new Error(
 				`SSH command failed for ${user}@${host}:${port}: ${details}`,
 			);
 		}
+	}
+
+	private getRemoteValidationScript() {
+		return [
+			"if ! command -v haproxy >/dev/null 2>&1; then",
+			"  echo 'haproxy binary not found in container' >&2",
+			"  exit 127",
+			"fi",
+			"for cfg in /usr/local/etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg; do",
+			'  if [ -f "$cfg" ]; then',
+			'    haproxy -c -f "$cfg"',
+			"    exit $?",
+			"  fi",
+			"done",
+			"echo 'No haproxy.cfg found in common paths' >&2",
+			"exit 1",
+		].join("\n");
+	}
+
+	private extractValidationConfigArgsFromDockerInspect(
+		inspectResult: Array<{
+			Path?: string;
+			Args?: string[];
+		}>,
+	) {
+		const container = inspectResult[0];
+		if (!container) {
+			return [] as string[];
+		}
+
+		const pathValue = container.Path?.trim() || "";
+		const args = Array.isArray(container.Args) ? container.Args : [];
+
+		const normalizedCommand = [pathValue, ...args]
+			.map((part) => part.trim())
+			.filter(Boolean);
+
+		if (normalizedCommand.length === 0) {
+			return [] as string[];
+		}
+
+		const configArgs: string[] = [];
+		for (let i = 0; i < normalizedCommand.length; i++) {
+			const token = normalizedCommand[i];
+			if (!token) {
+				continue;
+			}
+
+			if (token === "-f") {
+				const next = normalizedCommand[i + 1];
+				if (next && !next.startsWith("-")) {
+					configArgs.push("-f", next);
+					i += 1;
+				}
+				continue;
+			}
+
+			if (token.startsWith("-f") && token.length > 2) {
+				configArgs.push("-f", token.slice(2));
+			}
+		}
+
+		return configArgs;
+	}
+
+	private async buildRemoteValidateDockerCommand(
+		nodeConfig: HAProxyNodeRuntimeConfig,
+		targetContainer: string,
+	) {
+		try {
+			const inspectStdout = await this.executeSshCommand(
+				nodeConfig,
+				`docker inspect ${this.quoteForSh(targetContainer)}`,
+			);
+
+			const inspectResult = JSON.parse(inspectStdout) as Array<{
+				Path?: string;
+				Args?: string[];
+			}>;
+
+			const configArgs =
+				this.extractValidationConfigArgsFromDockerInspect(inspectResult);
+			if (configArgs.length > 0) {
+				const validationCommand = ["haproxy", "-c", ...configArgs]
+					.map((part) => this.quoteForSh(part))
+					.join(" ");
+
+				return `docker exec ${this.quoteForSh(targetContainer)} sh -lc ${this.quoteForSh(validationCommand)}`;
+			}
+		} catch {
+			// Fall back to common-path validation script when inspect parsing is not available.
+		}
+
+		return `docker exec ${this.quoteForSh(targetContainer)} sh -lc ${this.quoteForSh(this.getRemoteValidationScript())}`;
+	}
+
+	private compactRemoteOutput(stdout: string) {
+		const normalized = stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean);
+
+		if (normalized.length === 0) {
+			return undefined;
+		}
+
+		return normalized.slice(-3).join(" | ");
+	}
+
+	private buildRemoteMutationFeedback(params: {
+		action: "save" | "create" | "delete";
+		nodeConfig: HAProxyNodeRuntimeConfig;
+		targetPath: string;
+		targetContainer: string;
+		validationOutput?: string;
+	}): RemoteConfigMutationFeedback {
+		const { user, host, port } = this.resolveSshTarget(params.nodeConfig);
+		return {
+			mode: "remote",
+			action: params.action,
+			sshTarget: `${user}@${host}:${port}`,
+			container: params.targetContainer,
+			path: params.targetPath,
+			validation: "passed",
+			rollbackApplied: false,
+			details: [
+				`Remote ${params.action} completed.`,
+				`SSH target: ${user}@${host}:${port}`,
+				`Container validated: ${params.targetContainer}`,
+				`Config path: ${params.targetPath}`,
+			],
+			validationOutput: params.validationOutput,
+		};
 	}
 
 	private resolveConfigDir(customPath?: string | null) {
@@ -333,6 +625,13 @@ export class HAProxyService {
 			code === "ECONNREFUSED" ||
 			code === "EACCES" ||
 			error.message.includes("socket is disabled")
+		);
+	}
+
+	private isInvalidStatsResponseError(error: unknown) {
+		return (
+			error instanceof Error &&
+			error.message.startsWith("Invalid HAProxy stats response")
 		);
 	}
 
@@ -643,6 +942,10 @@ export class HAProxyService {
 				value: nodeConfig.haproxyStatsUrl?.trim() || "not set",
 			},
 			{
+				label: "Stats Socket",
+				value: nodeConfig.haproxySocketPath?.trim() || "not set",
+			},
+			{
 				label: "API URL",
 				value: nodeConfig.haproxyApiUrl?.trim() || "not set",
 			},
@@ -730,29 +1033,197 @@ export class HAProxyService {
 		return info;
 	}
 
+	private parseCounter(value: string | undefined) {
+		return Number.parseInt(value || "0", 10) || 0;
+	}
+
+	private deriveRuntimeStatus(rows: Array<Record<string, string>>) {
+		const statusCandidates = rows
+			.map((row) => row.status)
+			.filter((value): value is string => Boolean(value));
+
+		const hasOnlineStatus = statusCandidates.some((value) => {
+			const upper = value.toUpperCase();
+			return upper.includes("UP") || upper.includes("OPEN");
+		});
+
+		return hasOnlineStatus ? "online" : "offline";
+	}
+
+	private buildSnapshotFromRows(
+		rows: Array<Record<string, string>>,
+	): HAProxyStatsSnapshot {
+		const frontendRows = rows.filter((row) => row.svname === "FRONTEND");
+		const rowsForCounters = frontendRows.length > 0 ? frontendRows : rows;
+
+		const totals = rowsForCounters.reduce(
+			(acc, row) => {
+				acc.activeSessions += this.parseCounter(row.scur);
+				acc.connectionsRate += this.parseCounter(row.rate);
+				acc.bytesIn += this.parseCounter(row.bin);
+				acc.bytesOut += this.parseCounter(row.bout);
+				acc.queueCurrent += this.parseCounter(row.qcur);
+				acc.queueMax += this.parseCounter(row.qmax);
+				acc.errors +=
+					this.parseCounter(row.econ) +
+					this.parseCounter(row.eresp) +
+					this.parseCounter(row.ereq) +
+					this.parseCounter(row.dreq) +
+					this.parseCounter(row.dresp);
+				return acc;
+			},
+			{
+				activeSessions: 0,
+				connectionsRate: 0,
+				bytesIn: 0,
+				bytesOut: 0,
+				queueCurrent: 0,
+				queueMax: 0,
+				errors: 0,
+			},
+		);
+
+		const httpResponses = rowsForCounters.reduce(
+			(acc, row) => {
+				acc.xx2 += this.parseCounter(row.hrsp_2xx);
+				acc.xx3 += this.parseCounter(row.hrsp_3xx);
+				acc.xx4 += this.parseCounter(row.hrsp_4xx);
+				acc.xx5 += this.parseCounter(row.hrsp_5xx);
+				return acc;
+			},
+			{ xx2: 0, xx3: 0, xx4: 0, xx5: 0, other: 0 },
+		);
+
+		const knownResponses =
+			httpResponses.xx2 +
+			httpResponses.xx3 +
+			httpResponses.xx4 +
+			httpResponses.xx5;
+		httpResponses.other = Math.max(0, totals.connectionsRate - knownResponses);
+
+		const serverRows = rows.filter(
+			(row) =>
+				row.svname && row.svname !== "FRONTEND" && row.svname !== "BACKEND",
+		);
+
+		const health = serverRows.reduce(
+			(acc, row) => {
+				const status = (row.status || "").toUpperCase();
+				if (status.includes("UP") || status.includes("OPEN")) {
+					acc.up += 1;
+				} else if (
+					status.includes("DOWN") ||
+					status.includes("MAINT") ||
+					status.includes("NOLB")
+				) {
+					acc.down += 1;
+				} else {
+					acc.other += 1;
+				}
+				return acc;
+			},
+			{ up: 0, down: 0, other: 0 },
+		);
+
+		const servers = serverRows
+			.map((row) => ({
+				proxy: row.pxname || "unknown",
+				server: row.svname || "unknown",
+				status: row.status || "UNKNOWN",
+				activeSessions: this.parseCounter(row.scur),
+				connectionsRate: this.parseCounter(row.rate),
+				bytesIn: this.parseCounter(row.bin),
+				bytesOut: this.parseCounter(row.bout),
+				errors:
+					this.parseCounter(row.econ) +
+					this.parseCounter(row.eresp) +
+					this.parseCounter(row.ereq) +
+					this.parseCounter(row.dreq) +
+					this.parseCounter(row.dresp),
+			}))
+			.sort((a, b) => b.connectionsRate - a.connectionsRate)
+			.slice(0, 12);
+
+		return {
+			collectedAt: new Date().toISOString(),
+			totals,
+			httpResponses,
+			health,
+			servers,
+		};
+	}
+
+	private buildStatsFromRows(
+		rows: Array<Record<string, string>>,
+		params: {
+			uptime: string;
+			dataSource: HAProxyStatsDataSource;
+			nodeRuntime?: HAProxyNodeRuntimeDetails;
+			status?: string;
+			version?: string;
+			pids?: string;
+			warning?: string;
+		},
+	): HAProxyStats {
+		const snapshot = this.buildSnapshotFromRows(rows);
+		return {
+			status: params.status ?? this.deriveRuntimeStatus(rows),
+			uptime: params.uptime,
+			active_sessions: snapshot.totals.activeSessions,
+			connections_rate: snapshot.totals.connectionsRate,
+			version: params.version,
+			pids: params.pids,
+			dataSource: params.dataSource,
+			snapshot,
+			nodeRuntime: params.nodeRuntime,
+			warning: params.warning,
+		};
+	}
+
 	private parseStatResponse(response: string) {
 		const lines = response
-			.split("\n")
-			.map((line) => line.trim())
+			.split(/\r?\n/)
+			.map((line) => line.replace(/^\uFEFF/, "").trim())
 			.filter(Boolean);
 
-		const headerLine = lines.find((line) => line.startsWith("#"));
-		if (!headerLine) {
-			throw new Error("Invalid HAProxy stats response: missing headers");
+		const headerIndex = lines.findIndex((line) => {
+			if (line.startsWith("#")) {
+				return true;
+			}
+
+			const lower = line.toLowerCase();
+			return lower.startsWith("pxname,") || lower.startsWith("pxname;");
+		});
+
+		if (headerIndex < 0) {
+			const preview = lines.slice(0, 2).join(" | ").slice(0, 180);
+			throw new Error(
+				`Invalid HAProxy stats response: missing headers${preview ? ` (preview: ${preview})` : ""}`,
+			);
 		}
 
-		const headers = headerLine.replace(/^#\s*/, "").split(",");
-		const dataLines = lines.filter((line) => !line.startsWith("#"));
+		const headerLine = lines[headerIndex] || "";
+		const delimiter =
+			headerLine.includes(";") && !headerLine.includes(",") ? ";" : ",";
+		const headers = headerLine
+			.replace(/^#\s*/, "")
+			.split(delimiter)
+			.map((header) => header.trim())
+			.filter(Boolean);
+
+		const dataLines = lines
+			.slice(headerIndex + 1)
+			.filter((line) => !line.startsWith("#") && line.includes(delimiter));
 
 		if (dataLines.length === 0) {
 			throw new Error("Invalid HAProxy stats response: missing data rows");
 		}
 
 		const rows = dataLines.map((line) => {
-			const values = line.split(",");
+			const values = line.split(delimiter);
 			const row: Record<string, string> = {};
 			for (let i = 0; i < headers.length; i++) {
-				const header = headers[i]?.trim();
+				const header = headers[i];
 				if (!header) {
 					continue;
 				}
@@ -760,6 +1231,10 @@ export class HAProxyService {
 			}
 			return row;
 		});
+
+		if (!rows[0]?.pxname || !rows[0]?.svname) {
+			throw new Error("Invalid HAProxy stats response: malformed CSV headers");
+		}
 
 		return rows;
 	}
@@ -826,22 +1301,91 @@ export class HAProxyService {
 		};
 	}
 
+	getStatsCapabilities(
+		nodeConfig?: HAProxyNodeRuntimeConfig,
+	): HAProxyStatsCapabilities {
+		const socketPath = this.resolveSocketPath(nodeConfig);
+		const supportsSocket = Boolean(socketPath);
+		const supportsUrl = nodeConfig
+			? Boolean(this.resolveNodeStatsUrl(nodeConfig))
+			: Boolean(env.HAPROXY_STATS_URL?.trim());
+
+		const availableViews: Array<"graph" | "classic"> = [];
+		if (supportsSocket || supportsUrl) {
+			availableViews.push("graph");
+		}
+		if (supportsUrl) {
+			availableViews.push("classic");
+		}
+
+		const notes: string[] = [];
+		if (!supportsSocket) {
+			notes.push(
+				nodeConfig
+					? "Socket stats are unavailable. Set HAProxy socket endpoint in Node Configuration (for example /var/run/haproxy.sock, /var/lib/haproxy/haproxy.sock, or 127.0.0.1:9999)."
+					: "Socket stats are unavailable. Enable HAProxy socket and set HAPROXY_SOCKET_ENABLED=true.",
+			);
+		}
+		if (!supportsUrl) {
+			notes.push(
+				"Classic stats UI is unavailable because no HAProxy stats URL is configured.",
+			);
+		}
+
+		return {
+			supportsSocket,
+			supportsUrl,
+			availableViews,
+			defaultSource: supportsSocket ? "socket" : supportsUrl ? "url" : "none",
+			notes,
+		};
+	}
+
 	/**
 	 * Connect to HAProxy stats socket and execute a command
 	 * Returns the raw response from HAProxy
 	 */
-	private async executeSocketCommand(command: string): Promise<string> {
-		if (!this.socketEnabled) {
-			throw new Error("HAProxy socket is disabled by configuration");
+	private async executeSocketCommand(
+		command: string,
+		nodeConfig?: HAProxyNodeRuntimeConfig,
+	): Promise<string> {
+		const socketPath = this.resolveSocketPath(nodeConfig);
+		if (!socketPath) {
+			throw new Error("HAProxy socket path is not configured");
+		}
+		const socketTarget = this.resolveSocketTarget(socketPath);
+
+		if (nodeConfig && !nodeConfig.isLocalService) {
+			const remoteCommand =
+				socketTarget.kind === "tcp"
+					? [
+							`printf '%s\\n' ${this.quoteForSh(command)} | if command -v nc >/dev/null 2>&1; then nc -w 3 ${this.quoteForSh(socketTarget.host)} ${this.quoteForSh(String(socketTarget.port))}; else socat - ${this.quoteForSh(`TCP:${socketTarget.host}:${socketTarget.port}`)}; fi`,
+						].join(" ")
+					: `printf '%s\\n' ${this.quoteForSh(command)} | socat - ${this.quoteForSh(socketTarget.path)}`;
+
+			const stdout = await this.executeSshCommand(nodeConfig, remoteCommand);
+			return stdout;
 		}
 
 		try {
 			const net = await import("node:net");
 			return new Promise((resolve, reject) => {
-				const socket = net.createConnection(this.socketPath, () => {
-					socket.write(`${command}\n`);
-					socket.end();
-				});
+				const socket =
+					socketTarget.kind === "tcp"
+						? net.createConnection(
+								{
+									host: socketTarget.host,
+									port: socketTarget.port,
+								},
+								() => {
+									socket.write(`${command}\n`);
+									socket.end();
+								},
+							)
+						: net.createConnection(socketTarget.path, () => {
+								socket.write(`${command}\n`);
+								socket.end();
+							});
 
 				let response = "";
 				socket.on("data", (data) => {
@@ -876,20 +1420,86 @@ export class HAProxyService {
 	 * Get HAProxy statistics from the stats socket
 	 * Uses the 'show stat' command
 	 */
-	async getStats(nodeConfig?: HAProxyNodeRuntimeConfig): Promise<HAProxyStats> {
+	async getStats(
+		nodeConfig?: HAProxyNodeRuntimeConfig,
+		options?: { source?: HAProxyStatsRequestedSource },
+	): Promise<HAProxyStats> {
 		try {
+			const source = options?.source ?? "auto";
+			const capabilities = this.getStatsCapabilities(nodeConfig);
+			let shouldUseSocket =
+				source === "socket" ||
+				(source === "auto" && capabilities.supportsSocket);
+			let shouldUseUrl =
+				source === "url" ||
+				(source === "auto" && !shouldUseSocket && capabilities.supportsUrl);
+
+			if (shouldUseSocket && capabilities.supportsSocket) {
+				try {
+					const [statResponse, infoResponse] = await Promise.all([
+						this.executeSocketCommand("show stat", nodeConfig),
+						this.executeSocketCommand("show info", nodeConfig),
+					]);
+
+					const rows = this.parseStatResponse(statResponse);
+					const info = this.parseInfoResponse(infoResponse);
+					const isStopping = info.Stopping === "1";
+					const uptimeSeconds = parseInt(info.Uptime_sec || "0", 10) || 0;
+					const formattedUptime = this.formatDuration(uptimeSeconds);
+					const status = isStopping
+						? "stopping"
+						: this.deriveRuntimeStatus(rows);
+
+					let nodeRuntime: HAProxyNodeRuntimeDetails | undefined;
+					if (nodeConfig) {
+						nodeRuntime = await this.buildNodeRuntimeDetails(nodeConfig);
+					}
+
+					return this.buildStatsFromRows(rows, {
+						uptime: nodeRuntime?.docker?.uptime || formattedUptime,
+						dataSource: "socket",
+						nodeRuntime,
+						status,
+						version: info.Version || undefined,
+						pids: info.Pid || undefined,
+					});
+				} catch (socketError) {
+					const canFallbackToUrl =
+						source === "auto" &&
+						capabilities.supportsUrl &&
+						Boolean(nodeConfig);
+
+					if (!canFallbackToUrl) {
+						throw socketError;
+					}
+
+					if (!this.isExpectedSocketError(socketError)) {
+						console.warn(
+							"Socket stats unavailable or malformed; falling back to URL stats:",
+							socketError,
+						);
+					}
+
+					shouldUseSocket = false;
+					shouldUseUrl = true;
+				}
+			}
+
 			if (nodeConfig) {
 				const nodeRuntime = await this.buildNodeRuntimeDetails(nodeConfig);
 				const statsUrl = this.resolveNodeStatsUrl(nodeConfig);
-				if (!statsUrl) {
+				if (!statsUrl || !shouldUseUrl) {
 					return {
 						status: "not-configured",
 						uptime: nodeRuntime.docker?.uptime || "n/a",
 						active_sessions: 0,
 						connections_rate: 0,
+						dataSource: "none",
 						nodeRuntime,
 						warning:
-							"HAProxy stats URL is not configured for this node. Runtime information is shown where available.",
+							capabilities.supportsUrl || capabilities.supportsSocket
+								? "Selected source is unavailable for this node. Runtime information is shown where available."
+								: "HAProxy stats URL is not configured for this node. Runtime information is shown where available.",
 					};
 				}
 
@@ -907,6 +1517,7 @@ export class HAProxyService {
 						uptime: nodeRuntime.docker?.uptime || "n/a",
 						active_sessions: 0,
 						connections_rate: 0,
+						dataSource: "url",
 						nodeRuntime,
 						warning,
 					};
@@ -918,6 +1529,7 @@ export class HAProxyService {
 						uptime: nodeRuntime.docker?.uptime || "n/a",
 						active_sessions: 0,
 						connections_rate: 0,
+						dataSource: "none",
 						nodeRuntime,
 						warning:
 							"HAProxy stats URL is not configured for this node. Runtime information is shown where available.",
@@ -925,82 +1537,28 @@ export class HAProxyService {
 				}
 
 				const rows = this.parseStatResponse(remoteStats.csvText);
-				const frontendRows = rows.filter((row) => row.svname === "FRONTEND");
-				const rowsForCounters = frontendRows.length > 0 ? frontendRows : rows;
-
-				const activeConn = rowsForCounters.reduce((sum, row) => {
-					return sum + (parseInt(row.scur || "0", 10) || 0);
-				}, 0);
-
-				const connectRate = rowsForCounters.reduce((sum, row) => {
-					return sum + (parseInt(row.rate || "0", 10) || 0);
-				}, 0);
-
-				const statusCandidates = rows
-					.map((row) => row.status)
-					.filter((value): value is string => Boolean(value));
-
-				const hasOnlineStatus = statusCandidates.some((value) => {
-					const upper = value.toUpperCase();
-					return upper.includes("UP") || upper.includes("OPEN");
-				});
-
-				return {
-					status: hasOnlineStatus ? "online" : "offline",
+				return this.buildStatsFromRows(rows, {
+					status: this.deriveRuntimeStatus(rows),
 					uptime: nodeRuntime.docker?.uptime || remoteStats.uptime,
-					active_sessions: activeConn,
-					connections_rate: connectRate,
+					dataSource: "url",
 					nodeRuntime,
-				};
+				});
 			}
 
-			const [statResponse, infoResponse] = await Promise.all([
-				this.executeSocketCommand("show stat"),
-				this.executeSocketCommand("show info"),
-			]);
-
-			const rows = this.parseStatResponse(statResponse);
-			const info = this.parseInfoResponse(infoResponse);
-
-			const frontendRows = rows.filter((row) => row.svname === "FRONTEND");
-			const rowsForCounters = frontendRows.length > 0 ? frontendRows : rows;
-
-			const activeConn = rowsForCounters.reduce((sum, row) => {
-				return sum + (parseInt(row.scur || "0", 10) || 0);
-			}, 0);
-
-			const connectRate = rowsForCounters.reduce((sum, row) => {
-				return sum + (parseInt(row.rate || "0", 10) || 0);
-			}, 0);
-
-			const statusCandidates = rows
-				.map((row) => row.status)
-				.filter((value): value is string => Boolean(value));
-			const hasOnlineStatus = statusCandidates.some((value) => {
-				const upper = value.toUpperCase();
-				return upper.includes("UP") || upper.includes("OPEN");
-			});
-
-			const isStopping = info.Stopping === "1";
-			const uptimeSeconds = parseInt(info.Uptime_sec || "0", 10) || 0;
-			const formattedUptime = this.formatDuration(uptimeSeconds);
-
-			const status = isStopping
-				? "stopping"
-				: hasOnlineStatus
-					? "online"
-					: "offline";
-
 			return {
-				status,
-				uptime: formattedUptime,
-				active_sessions: activeConn,
-				connections_rate: connectRate,
-				version: info.Version || undefined,
-				pids: info.Pid || undefined,
+				status: "offline",
+				uptime: "n/a",
+				active_sessions: 0,
+				connections_rate: 0,
+				dataSource: "none",
+				warning:
+					"No stats source is available. Configure HAProxy socket or stats URL.",
 			};
 		} catch (error) {
-			if (!this.isExpectedSocketError(error)) {
+			if (
+				!this.isExpectedSocketError(error) &&
+				!this.isInvalidStatsResponseError(error)
+			) {
 				console.error("Error fetching HAProxy stats:", error);
 			}
 
@@ -1010,6 +1568,11 @@ export class HAProxyService {
 				uptime: "n/a",
 				active_sessions: 0,
 				connections_rate: 0,
+				dataSource: "none",
+				warning:
+					error instanceof Error
+						? error.message
+						: "Unable to fetch HAProxy stats from configured sources",
 			};
 		}
 	}
@@ -1043,7 +1606,10 @@ export class HAProxyService {
 		_nodeConfig?: HAProxyNodeRuntimeConfig,
 	): Promise<HAProxyBackend[]> {
 		try {
-			const response = await this.executeSocketCommand("show stat");
+			const response = await this.executeSocketCommand(
+				"show stat",
+				_nodeConfig,
+			);
 			const lines = response.split("\n").filter((l) => l && !l.startsWith("#"));
 
 			if (lines.length === 0) {
@@ -1351,32 +1917,32 @@ export class HAProxyService {
 		const resolverScript = [
 			`target=${this.quoteForSh(remotePath)}`,
 			"is_allowed_log_file() {",
-			"  case \"$1\" in",
+			'  case "$1" in',
 			"    *.log|*.log.[0-9]*) return 0 ;;",
 			"    *) return 1 ;;",
 			"  esac",
 			"}",
-			"if [ -f \"$target\" ]; then",
-			"  if is_allowed_log_file \"$target\"; then",
+			'if [ -f "$target" ]; then',
+			'  if is_allowed_log_file "$target"; then',
 			"    printf '%s\\n' \"$target\"",
 			"    exit 0",
 			"  fi",
 			"  echo 'Only .log and .log.<number> files are allowed for log reading.' >&2",
 			"  exit 1",
 			"fi",
-			"if [ -d \"$target\" ]; then",
+			'if [ -d "$target" ]; then',
 			"  newest=''",
 			"  newest_mtime='-1'",
-			"  for candidate in \"$target\"/*.log \"$target\"/*.log.[0-9]*; do",
-			"    [ -f \"$candidate\" ] || continue",
-			"    is_allowed_log_file \"$candidate\" || continue",
-			"    mtime=$(stat -c %Y \"$candidate\" 2>/dev/null || stat -f %m \"$candidate\" 2>/dev/null || echo 0)",
-			"    if [ \"$mtime\" -ge \"$newest_mtime\" ]; then",
-			"      newest_mtime=\"$mtime\"",
-			"      newest=\"$candidate\"",
+			'  for candidate in "$target"/*.log "$target"/*.log.[0-9]*; do',
+			'    [ -f "$candidate" ] || continue',
+			'    is_allowed_log_file "$candidate" || continue',
+			'    mtime=$(stat -c %Y "$candidate" 2>/dev/null || stat -f %m "$candidate" 2>/dev/null || echo 0)',
+			'    if [ "$mtime" -ge "$newest_mtime" ]; then',
+			'      newest_mtime="$mtime"',
+			'      newest="$candidate"',
 			"    fi",
 			"  done",
-			"  if [ -n \"$newest\" ]; then",
+			'  if [ -n "$newest" ]; then',
 			"    printf '%s\\n' \"$newest\"",
 			"    exit 0",
 			"  fi",
@@ -1408,25 +1974,25 @@ export class HAProxyService {
 		const listScript = [
 			`target=${this.quoteForSh(remotePath)}`,
 			"is_allowed_log_file() {",
-			"  case \"$1\" in",
+			'  case "$1" in',
 			"    *.log|*.log.[0-9]*) return 0 ;;",
 			"    *) return 1 ;;",
 			"  esac",
 			"}",
-			"if [ -f \"$target\" ]; then",
-			"  if is_allowed_log_file \"$target\"; then",
+			'if [ -f "$target" ]; then',
+			'  if is_allowed_log_file "$target"; then',
 			"    printf '%s\\n' \"$target\"",
 			"    exit 0",
 			"  fi",
 			"  echo 'Only .log and .log.<number> files are allowed for log reading.' >&2",
 			"  exit 1",
 			"fi",
-			"if [ -d \"$target\" ]; then",
-			"  for candidate in \"$target\"/*.log \"$target\"/*.log.[0-9]*; do",
-			"    [ -f \"$candidate\" ] || continue",
-			"    is_allowed_log_file \"$candidate\" || continue",
-			"    mtime=$(stat -c %Y \"$candidate\" 2>/dev/null || stat -f %m \"$candidate\" 2>/dev/null || echo 0)",
-			"    printf '%s\\t%s\\n' \"$mtime\" \"$candidate\"",
+			'if [ -d "$target" ]; then',
+			'  for candidate in "$target"/*.log "$target"/*.log.[0-9]*; do',
+			'    [ -f "$candidate" ] || continue',
+			'    is_allowed_log_file "$candidate" || continue',
+			'    mtime=$(stat -c %Y "$candidate" 2>/dev/null || stat -f %m "$candidate" 2>/dev/null || echo 0)',
+			'    printf \'%s\\t%s\\n\' "$mtime" "$candidate"',
 			"  done | sort -rn | cut -f2-",
 			"  exit 0",
 			"fi",
@@ -1742,25 +2308,31 @@ export class HAProxyService {
 		nodeConfig: HAProxyNodeRuntimeConfig,
 		targetContainer: string,
 	) {
-		const validationScript = [
-			"if ! command -v haproxy >/dev/null 2>&1; then",
-			"  echo 'haproxy binary not found in container' >&2",
-			"  exit 127",
-			"fi",
-			"for cfg in /usr/local/etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg; do",
-			'  if [ -f "$cfg" ]; then',
-			'    haproxy -c -f "$cfg"',
-			"    exit $?",
-			"  fi",
-			"done",
-			"echo 'No haproxy.cfg found in common paths' >&2",
-			"exit 1",
-		].join("; ");
-
-		await this.executeSshCommand(
+		const validateCommand = await this.buildRemoteValidateDockerCommand(
 			nodeConfig,
-			`docker exec ${this.quoteForSh(targetContainer)} sh -lc ${this.quoteForSh(validationScript)}`,
+			targetContainer,
 		);
+		await this.executeSshCommand(nodeConfig, validateCommand);
+	}
+
+	private describeCommandError(error: unknown, fallback: string) {
+		if (error instanceof Error && error.message.trim()) {
+			return error.message;
+		}
+
+		const commandError = error as {
+			stderr?: string;
+			stdout?: string;
+			message?: string;
+		};
+
+		const details =
+			commandError.stderr?.trim() ||
+			commandError.stdout?.trim() ||
+			commandError.message ||
+			fallback;
+
+		return details;
 	}
 
 	async reloadConfig(nodeConfig?: HAProxyNodeRuntimeConfig): Promise<boolean> {
@@ -1809,7 +2381,9 @@ export class HAProxyService {
 			return true;
 		} catch (error) {
 			console.error("Error reloading HAProxy config:", error);
-			throw new Error("Failed to reload HAProxy configuration");
+			throw new Error(
+				`Failed to reload HAProxy configuration: ${this.describeCommandError(error, "Unknown reload error")}`,
+			);
 		}
 	}
 
@@ -1886,6 +2460,15 @@ export class HAProxyService {
 			relativePath: normalized,
 			absPath: resolvedFile,
 		};
+	}
+
+	private normalizeConfigContent(content: string) {
+		const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		if (normalized.length === 0) {
+			return normalized;
+		}
+
+		return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
 	}
 
 	private async walkConfigFiles(
@@ -2028,23 +2611,70 @@ export class HAProxyService {
 		filePath: string,
 		content: string,
 		nodeConfig?: HAProxyNodeRuntimeConfig,
-	): Promise<void> {
+	): Promise<{ remoteFeedback?: RemoteConfigMutationFeedback }> {
+		const normalizedContent = this.normalizeConfigContent(content);
+
 		if (nodeConfig && this.shouldUseSshForConfig(nodeConfig)) {
-			throw new Error(
-				"Saving config files for remote SSH nodes is not supported yet. Use SSH directly or run backend on the target host.",
+			const target = this.normalizeRemoteConfigFilePath(filePath, nodeConfig);
+			const targetContainer = await this.resolveRemoteReloadTarget(nodeConfig);
+			const validateCommand = await this.buildRemoteValidateDockerCommand(
+				nodeConfig,
+				targetContainer,
 			);
+			const backupPath = `${target.absPath}.haproxy-manager.bak.$$`;
+			const writeScript = [
+				"set -eu",
+				`target_path=${this.quoteForSh(target.absPath)}`,
+				`backup_path=${this.quoteForSh(backupPath)}`,
+				`if [ ! -f ${this.quoteForSh(target.absPath)} ]; then`,
+				`  echo ${this.quoteForSh(`Config file not found: ${target.relativePath}`)} >&2`,
+				"  exit 1",
+				"fi",
+				`cp -- "$target_path" "$backup_path"`,
+				`printf %s ${this.quoteForSh(normalizedContent)} > "$target_path"`,
+				`if ${validateCommand}; then`,
+				'  rm -f -- "$backup_path"',
+				"  exit 0",
+				"fi",
+				"validation_exit=$?",
+				'cp -- "$backup_path" "$target_path"',
+				'rm -f -- "$backup_path"',
+				`echo ${this.quoteForSh("Remote HAProxy validation failed after save. Changes were rolled back.")} >&2`,
+				'exit "$validation_exit"',
+			].join("\n");
+
+			const validationStdout = await this.executeSshCommand(
+				nodeConfig,
+				writeScript,
+			);
+			await this.writeJsonCache(
+				this.getRemoteConfigContentCacheKey(nodeConfig, target.relativePath),
+				{ content: normalizedContent },
+			);
+			await this.deleteCacheKeys([
+				this.getRemoteConfigListCacheKey(nodeConfig),
+			]);
+			return {
+				remoteFeedback: this.buildRemoteMutationFeedback({
+					action: "save",
+					nodeConfig,
+					targetPath: target.relativePath,
+					targetContainer,
+					validationOutput: this.compactRemoteOutput(validationStdout),
+				}),
+			};
 		}
 
 		const fs = await import("node:fs/promises");
-		const path = await import("node:path");
+		const nodePath = await import("node:path");
 		const target = this.normalizeConfigFilePath(
 			filePath,
 			nodeConfig?.haproxyConfigPath,
 		);
 		const previousContent = await fs.readFile(target.absPath, "utf8");
 
-		await fs.mkdir(path.dirname(target.absPath), { recursive: true });
-		await fs.writeFile(target.absPath, content, "utf8");
+		await fs.mkdir(nodePath.dirname(target.absPath), { recursive: true });
+		await fs.writeFile(target.absPath, normalizedContent, "utf8");
 
 		try {
 			await this.validateConfig();
@@ -2056,31 +2686,77 @@ export class HAProxyService {
 					: "HAProxy config validation failed. Save was rolled back.",
 			);
 		}
+
+		return {};
 	}
 
 	async createConfigFile(
 		filePath: string,
 		content = "",
 		nodeConfig?: HAProxyNodeRuntimeConfig,
-	): Promise<void> {
+	): Promise<{ remoteFeedback?: RemoteConfigMutationFeedback }> {
+		const normalizedContent = this.normalizeConfigContent(content);
+
 		if (nodeConfig && this.shouldUseSshForConfig(nodeConfig)) {
-			throw new Error(
-				"Creating config files for remote SSH nodes is not supported yet. Use SSH directly or run backend on the target host.",
+			const target = this.normalizeRemoteConfigFilePath(filePath, nodeConfig);
+			const targetContainer = await this.resolveRemoteReloadTarget(nodeConfig);
+			const validateCommand = await this.buildRemoteValidateDockerCommand(
+				nodeConfig,
+				targetContainer,
 			);
+			const dirPath = path.posix.dirname(target.absPath);
+			const createScript = [
+				"set -eu",
+				`target_path=${this.quoteForSh(target.absPath)}`,
+				`mkdir -p -- ${this.quoteForSh(dirPath)}`,
+				`if [ -e ${this.quoteForSh(target.absPath)} ]; then`,
+				`  echo ${this.quoteForSh(`Config file already exists: ${target.relativePath}`)} >&2`,
+				"  exit 1",
+				"fi",
+				`printf %s ${this.quoteForSh(normalizedContent)} > "$target_path"`,
+				`if ${validateCommand}; then`,
+				"  exit 0",
+				"fi",
+				"validation_exit=$?",
+				'rm -f -- "$target_path"',
+				`echo ${this.quoteForSh("Remote HAProxy validation failed after create. New file was removed.")} >&2`,
+				'exit "$validation_exit"',
+			].join("\n");
+
+			const validationStdout = await this.executeSshCommand(
+				nodeConfig,
+				createScript,
+			);
+			await this.writeJsonCache(
+				this.getRemoteConfigContentCacheKey(nodeConfig, target.relativePath),
+				{ content: normalizedContent },
+			);
+			await this.deleteCacheKeys([
+				this.getRemoteConfigListCacheKey(nodeConfig),
+			]);
+			return {
+				remoteFeedback: this.buildRemoteMutationFeedback({
+					action: "create",
+					nodeConfig,
+					targetPath: target.relativePath,
+					targetContainer,
+					validationOutput: this.compactRemoteOutput(validationStdout),
+				}),
+			};
 		}
 
 		const fs = await import("node:fs/promises");
-		const path = await import("node:path");
+		const nodePath = await import("node:path");
 		const target = this.normalizeConfigFilePath(
 			filePath,
 			nodeConfig?.haproxyConfigPath,
 		);
 
-		await fs.mkdir(path.dirname(target.absPath), { recursive: true });
+		await fs.mkdir(nodePath.dirname(target.absPath), { recursive: true });
 		const handle = await fs.open(target.absPath, "wx");
 		try {
-			if (content) {
-				await handle.writeFile(content, "utf8");
+			if (normalizedContent) {
+				await handle.writeFile(normalizedContent, "utf8");
 			}
 		} finally {
 			await handle.close();
@@ -2096,16 +2772,60 @@ export class HAProxyService {
 					: "HAProxy config validation failed. File creation was rolled back.",
 			);
 		}
+
+		return {};
 	}
 
 	async deleteConfigFile(
 		filePath: string,
 		nodeConfig?: HAProxyNodeRuntimeConfig,
-	): Promise<void> {
+	): Promise<{ remoteFeedback?: RemoteConfigMutationFeedback }> {
 		if (nodeConfig && this.shouldUseSshForConfig(nodeConfig)) {
-			throw new Error(
-				"Deleting config files for remote SSH nodes is not supported yet. Use SSH directly or run backend on the target host.",
+			const target = this.normalizeRemoteConfigFilePath(filePath, nodeConfig);
+			const targetContainer = await this.resolveRemoteReloadTarget(nodeConfig);
+			const validateCommand = await this.buildRemoteValidateDockerCommand(
+				nodeConfig,
+				targetContainer,
 			);
+			const backupPath = `${target.absPath}.haproxy-manager.bak.$$`;
+			const deleteScript = [
+				"set -eu",
+				`target_path=${this.quoteForSh(target.absPath)}`,
+				`backup_path=${this.quoteForSh(backupPath)}`,
+				`if [ ! -f ${this.quoteForSh(target.absPath)} ]; then`,
+				`  echo ${this.quoteForSh(`Config file not found: ${target.relativePath}`)} >&2`,
+				"  exit 1",
+				"fi",
+				'cp -- "$target_path" "$backup_path"',
+				'rm -- "$target_path"',
+				`if ${validateCommand}; then`,
+				'  rm -f -- "$backup_path"',
+				"  exit 0",
+				"fi",
+				"validation_exit=$?",
+				'cp -- "$backup_path" "$target_path"',
+				'rm -f -- "$backup_path"',
+				`echo ${this.quoteForSh("Remote HAProxy validation failed after delete. File was restored.")} >&2`,
+				'exit "$validation_exit"',
+			].join("\n");
+
+			const validationStdout = await this.executeSshCommand(
+				nodeConfig,
+				deleteScript,
+			);
+			await this.deleteCacheKeys([
+				this.getRemoteConfigListCacheKey(nodeConfig),
+				this.getRemoteConfigContentCacheKey(nodeConfig, target.relativePath),
+			]);
+			return {
+				remoteFeedback: this.buildRemoteMutationFeedback({
+					action: "delete",
+					nodeConfig,
+					targetPath: target.relativePath,
+					targetContainer,
+					validationOutput: this.compactRemoteOutput(validationStdout),
+				}),
+			};
 		}
 
 		const fs = await import("node:fs/promises");
@@ -2126,6 +2846,8 @@ export class HAProxyService {
 					: "HAProxy config validation failed. Delete was rolled back.",
 			);
 		}
+
+		return {};
 	}
 }
 

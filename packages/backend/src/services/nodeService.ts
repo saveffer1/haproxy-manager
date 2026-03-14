@@ -59,6 +59,7 @@ export class NodeService {
 					logStrategy: input.logStrategy || "docker",
 					logPath: input.logPath || null,
 					haproxyStatsUrl: input.haproxyStatsUrl || null,
+					haproxySocketPath: input.haproxySocketPath || null,
 					haproxyApiUrl: input.haproxyApiUrl || null,
 					haproxyContainerRef: input.haproxyContainerRef?.trim() || null,
 					haproxyConfigPath: input.haproxyConfigPath || null,
@@ -110,6 +111,8 @@ export class NodeService {
 				updates.logPath = normalizeOptional(input.logPath);
 			if (input.haproxyStatsUrl !== undefined)
 				updates.haproxyStatsUrl = normalizeOptional(input.haproxyStatsUrl);
+			if (input.haproxySocketPath !== undefined)
+				updates.haproxySocketPath = normalizeOptional(input.haproxySocketPath);
 			if (input.haproxyApiUrl !== undefined)
 				updates.haproxyApiUrl = normalizeOptional(input.haproxyApiUrl);
 			if (input.haproxyContainerRef !== undefined)
@@ -205,6 +208,7 @@ export async function ensureDefaultNode() {
 			logStrategy,
 			logPath: env.DEFAULT_NODE_LOG_PATH || null,
 			haproxyStatsUrl: `http://${env.DEFAULT_NODE_IP_ADDRESS}:8404/stats`,
+			haproxySocketPath: env.HAPROXY_SOCKET_PATH,
 			haproxyApiUrl: `http://${env.DEFAULT_NODE_IP_ADDRESS}:3000`,
 			haproxyConfigPath: env.HAPROXY_CONFIG_DIR,
 			haproxyLogPath: env.DEFAULT_NODE_LOG_PATH || null,
@@ -223,6 +227,9 @@ export async function ensureDefaultNode() {
 			message.includes('column "source" of relation "nodes" does not exist') ||
 			message.includes(
 				'column "haproxy_stats_url" of relation "nodes" does not exist',
+			) ||
+			message.includes(
+				'column "haproxy_socket_path" of relation "nodes" does not exist',
 			) ||
 			message.includes(
 				'column "haproxy_api_url" of relation "nodes" does not exist',

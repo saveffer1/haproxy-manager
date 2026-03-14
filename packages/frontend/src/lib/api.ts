@@ -24,6 +24,41 @@ export type HAProxyStats = {
 	uptime: string;
 	active_sessions: number;
 	connections_rate: number;
+	dataSource?: "socket" | "url" | "none";
+	snapshot?: {
+		collectedAt: string;
+		totals: {
+			activeSessions: number;
+			connectionsRate: number;
+			bytesIn: number;
+			bytesOut: number;
+			queueCurrent: number;
+			queueMax: number;
+			errors: number;
+		};
+		httpResponses: {
+			xx2: number;
+			xx3: number;
+			xx4: number;
+			xx5: number;
+			other: number;
+		};
+		health: {
+			up: number;
+			down: number;
+			other: number;
+		};
+		servers: Array<{
+			proxy: string;
+			server: string;
+			status: string;
+			activeSessions: number;
+			connectionsRate: number;
+			bytesIn: number;
+			bytesOut: number;
+			errors: number;
+		}>;
+	};
 	warning?: string;
 	nodeRuntime?: {
 		nodeId: string;
@@ -54,6 +89,16 @@ export type HAProxyStats = {
 	};
 };
 
+export type HAProxyStatsCapabilities = {
+	supportsSocket: boolean;
+	supportsUrl: boolean;
+	availableViews: Array<"graph" | "classic">;
+	defaultSource: "socket" | "url" | "none";
+	notes: string[];
+};
+
+export type HAProxyStatsRequestedSource = "auto" | "socket" | "url";
+
 export type NodeOutput = {
 	id: string;
 	name: string;
@@ -64,6 +109,7 @@ export type NodeOutput = {
 	logStrategy: "docker" | "file" | "journald";
 	logPath?: string;
 	haproxyStatsUrl?: string | null;
+	haproxySocketPath?: string | null;
 	haproxyApiUrl?: string | null;
 	haproxyContainerRef?: string | null;
 	haproxyConfigPath?: string | null;
@@ -81,6 +127,7 @@ export type NodeConfigUpdateInput = {
 	type: "managed" | "monitored";
 	source: "manual" | "docker" | "remote" | "api";
 	haproxyStatsUrl?: string;
+	haproxySocketPath?: string;
 	haproxyApiUrl?: string;
 	haproxyContainerRef?: string;
 	haproxyConfigPath?: string;
@@ -97,6 +144,7 @@ export type CreateNodeInput = {
 	type?: "managed" | "monitored";
 	source?: "manual" | "docker" | "remote" | "api";
 	haproxyStatsUrl?: string;
+	haproxySocketPath?: string;
 	haproxyApiUrl?: string;
 	haproxyContainerRef?: string;
 	haproxyConfigPath?: string;
@@ -122,6 +170,23 @@ export type HAProxyConfigFile = {
 	path: string;
 	size: number;
 	updatedAt: string;
+};
+
+export type RemoteConfigMutationFeedback = {
+	mode: "remote";
+	action: "save" | "create" | "delete";
+	sshTarget: string;
+	container: string;
+	path: string;
+	validation: "passed";
+	rollbackApplied: boolean;
+	details: string[];
+	validationOutput?: string;
+};
+
+export type HAProxyConfigMutationResult = {
+	path: string;
+	remoteFeedback?: RemoteConfigMutationFeedback;
 };
 
 export type HAProxyLogSource = "container" | "file";
@@ -533,9 +598,11 @@ export async function getDashboardSummary(
 	nodeId?: string | null,
 	options?: {
 		includeStats?: boolean;
+		statsSource?: HAProxyStatsRequestedSource;
 	},
 ): Promise<DashboardSummary> {
 	const includeStats = options?.includeStats ?? false;
+	const statsSource = options?.statsSource ?? "auto";
 	const scopedNodeId = nodeId?.trim() || null;
 	const shouldFetchStats = includeStats && Boolean(scopedNodeId);
 
@@ -543,7 +610,7 @@ export async function getDashboardSummary(
 		requestTreaty<ApiEnvelope<HealthStatus>>(api.health.get()),
 		shouldFetchStats
 			? getJsonRaw<ApiEnvelope<HAProxyStats>>(
-					appendNodeId("/haproxy/stats", scopedNodeId),
+					`${appendNodeId("/haproxy/stats", scopedNodeId)}&source=${statsSource}`,
 				)
 			: Promise.resolve({ success: true, data: null } as ApiEnvelope<null>),
 		requestTreaty<ApiEnvelope<NodeOutput[]>>(api.api.nodes.get()),
@@ -589,6 +656,44 @@ export async function getHAProxyStatsDashboardHtml(
 	return apiFetchText(`/haproxy/stats/ui?${query.toString()}`, {
 		includeApiKey: false,
 	});
+}
+
+export async function getHAProxyStatsCapabilities(
+	nodeId: string,
+): Promise<HAProxyStatsCapabilities> {
+	const scopedNodeId = requireNodeId(nodeId);
+	const response = await getJsonRaw<ApiEnvelope<HAProxyStatsCapabilities>>(
+		appendNodeId("/haproxy/stats/capabilities", scopedNodeId),
+	);
+
+	if (!response.success || !response.data) {
+		throw new Error(
+			response.error ?? "Failed to fetch HAProxy stats capabilities",
+		);
+	}
+
+	return response.data;
+}
+
+export async function getHAProxyStatsSnapshot(input: {
+	nodeId: string;
+	source?: HAProxyStatsRequestedSource;
+}): Promise<HAProxyStats> {
+	const scopedNodeId = requireNodeId(input.nodeId);
+	const query = new URLSearchParams({
+		nodeId: scopedNodeId,
+		source: input.source ?? "auto",
+	});
+
+	const response = await getJsonRaw<ApiEnvelope<HAProxyStats>>(
+		`/haproxy/stats/snapshot?${query.toString()}`,
+	);
+
+	if (!response.success || !response.data) {
+		throw new Error(response.error ?? "Failed to fetch HAProxy stats snapshot");
+	}
+
+	return response.data;
 }
 
 export async function listHAProxyConfigFiles(
@@ -646,7 +751,7 @@ export async function createHAProxyConfigFile(
 	nodeId: string,
 ) {
 	const scopedNodeId = requireNodeId(nodeId);
-	const response = await postJsonRaw<ApiEnvelope<{ path: string }>>(
+	const response = await postJsonRaw<ApiEnvelope<HAProxyConfigMutationResult>>(
 		appendNodeId("/haproxy/config-files", scopedNodeId),
 		{
 			path: filePath,
@@ -669,7 +774,7 @@ export async function saveHAProxyConfigFile(
 	nodeId: string,
 ) {
 	const scopedNodeId = requireNodeId(nodeId);
-	const response = await putJsonRaw<ApiEnvelope<{ path: string }>>(
+	const response = await putJsonRaw<ApiEnvelope<HAProxyConfigMutationResult>>(
 		appendNodeId("/haproxy/config-files/content", scopedNodeId),
 		{
 			path: filePath,
@@ -696,9 +801,9 @@ export async function deleteHAProxyConfigFile(
 		reload: String(reload),
 	});
 	query.set("nodeId", scopedNodeId);
-	const response = await deleteJsonRaw<ApiEnvelope<{ path: string }>>(
-		`/haproxy/config-files?${query.toString()}`,
-	);
+	const response = await deleteJsonRaw<
+		ApiEnvelope<HAProxyConfigMutationResult>
+	>(`/haproxy/config-files?${query.toString()}`);
 
 	if (!response.success) {
 		throw new Error(response.error ?? "Failed to delete HAProxy config file");
@@ -806,6 +911,7 @@ export async function updateNodeConfiguration(
 			type: input.type,
 			source: input.source,
 			haproxyStatsUrl: input.haproxyStatsUrl,
+			haproxySocketPath: input.haproxySocketPath,
 			haproxyApiUrl: input.haproxyApiUrl,
 			haproxyContainerRef: input.haproxyContainerRef,
 			haproxyConfigPath: input.haproxyConfigPath,

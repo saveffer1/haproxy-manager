@@ -12,11 +12,19 @@ import {
 	type HAProxyLogReadResult,
 	type HAProxyNodeRuntimeConfig,
 	type HAProxyStats,
+	type HAProxyStatsCapabilities,
+	type HAProxyStatsRequestedSource,
 	haproxyService,
+	type RemoteConfigMutationFeedback,
 } from "../services/haproxyService";
 import type { ApiResponse } from "../types/common";
 
 type ThemeMode = "light" | "dark";
+
+type ConfigMutationResponse = {
+	path: string;
+	remoteFeedback?: RemoteConfigMutationFeedback;
+};
 
 function getStatsThemeCss(theme: ThemeMode) {
 	if (theme !== "dark") {
@@ -79,6 +87,14 @@ function requireManagedNode(node: HAProxyNodeRuntimeConfig | null) {
 	return { valid: true as const };
 }
 
+function toErrorMessage(error: unknown, fallback: string) {
+	if (error instanceof Error && error.message.trim()) {
+		return error.message;
+	}
+
+	return fallback;
+}
+
 export function createHAProxyController() {
 	return (
 		new Elysia({ prefix: "/haproxy" })
@@ -86,6 +102,8 @@ export function createHAProxyController() {
 				const requestPath = new URL(request.url).pathname;
 				const requiresManagedNode = ![
 					"/haproxy/stats",
+					"/haproxy/stats/capabilities",
+					"/haproxy/stats/snapshot",
 					"/haproxy/stats/ui",
 				].includes(requestPath);
 
@@ -212,8 +230,11 @@ export function createHAProxyController() {
 			})
 			// Get HAProxy stats - connects to socket and fetches real-time stats
 			.get(
-				"/stats",
-				async ({ request, set }): Promise<ApiResponse<HAProxyStats>> => {
+				"/stats/capabilities",
+				async ({
+					request,
+					set,
+				}): Promise<ApiResponse<HAProxyStatsCapabilities>> => {
 					try {
 						const nodeId = new URL(request.url).searchParams.get("nodeId");
 						const resolved = await resolveNodeConfig(nodeId);
@@ -225,8 +246,89 @@ export function createHAProxyController() {
 							};
 						}
 
+						return {
+							success: true,
+							data: haproxyService.getStatsCapabilities(
+								resolved.node ?? undefined,
+							),
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to fetch HAProxy stats capabilities",
+						};
+					}
+				},
+			)
+			.get(
+				"/stats/snapshot",
+				async ({ request, set }): Promise<ApiResponse<HAProxyStats>> => {
+					try {
+						const requestUrl = new URL(request.url);
+						const nodeId = requestUrl.searchParams.get("nodeId");
+						const sourceParam = requestUrl.searchParams.get("source");
+						const source: HAProxyStatsRequestedSource =
+							sourceParam === "socket" || sourceParam === "url"
+								? sourceParam
+								: "auto";
+
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
 						const stats = await haproxyService.getStats(
 							resolved.node ?? undefined,
+							{
+								source,
+							},
+						);
+
+						return {
+							success: true,
+							data: stats,
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to fetch HAProxy stats snapshot",
+						};
+					}
+				},
+			)
+			.get(
+				"/stats",
+				async ({ request, set }): Promise<ApiResponse<HAProxyStats>> => {
+					try {
+						const requestUrl = new URL(request.url);
+						const nodeId = requestUrl.searchParams.get("nodeId");
+						const sourceParam = requestUrl.searchParams.get("source");
+						const source: HAProxyStatsRequestedSource =
+							sourceParam === "socket" || sourceParam === "url"
+								? sourceParam
+								: "auto";
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
+						const stats = await haproxyService.getStats(
+							resolved.node ?? undefined,
+							{ source },
 						);
 						return {
 							success: true,
@@ -388,11 +490,7 @@ export function createHAProxyController() {
 			)
 			.get(
 				"/logs/files",
-				async ({
-					request,
-					query,
-					set,
-				}): Promise<ApiResponse<string[]>> => {
+				async ({ request, query, set }): Promise<ApiResponse<string[]>> => {
 					try {
 						const nodeId = new URL(request.url).searchParams.get("nodeId");
 						const resolved = await resolveNodeConfig(nodeId);
@@ -481,7 +579,7 @@ export function createHAProxyController() {
 					body,
 					request,
 					set,
-				}): Promise<ApiResponse<{ path: string }>> => {
+				}): Promise<ApiResponse<ConfigMutationResponse>> => {
 					try {
 						const nodeId = new URL(request.url).searchParams.get("nodeId");
 						const resolved = await resolveNodeConfig(nodeId);
@@ -507,7 +605,7 @@ export function createHAProxyController() {
 							};
 						}
 
-						await haproxyService.createConfigFile(
+						const mutation = await haproxyService.createConfigFile(
 							targetPath,
 							payload.content ?? "",
 							resolved.node ?? undefined,
@@ -519,7 +617,10 @@ export function createHAProxyController() {
 
 						return {
 							success: true,
-							data: { path: targetPath },
+							data: {
+								path: targetPath,
+								remoteFeedback: mutation.remoteFeedback,
+							},
 							message: "Config file created",
 						};
 					} catch (error) {
@@ -539,7 +640,7 @@ export function createHAProxyController() {
 					body,
 					request,
 					set,
-				}): Promise<ApiResponse<{ path: string }>> => {
+				}): Promise<ApiResponse<ConfigMutationResponse>> => {
 					try {
 						const nodeId = new URL(request.url).searchParams.get("nodeId");
 						const resolved = await resolveNodeConfig(nodeId);
@@ -565,19 +666,54 @@ export function createHAProxyController() {
 							};
 						}
 
-						await haproxyService.saveConfigFile(
+						const nodeConfig = resolved.node ?? undefined;
+						const previousContent = await haproxyService.getConfigFileContent(
+							targetPath,
+							nodeConfig,
+						);
+
+						const mutation = await haproxyService.saveConfigFile(
 							targetPath,
 							payload.content ?? "",
-							resolved.node ?? undefined,
+							nodeConfig,
 						);
 
 						if (payload.reload ?? true) {
-							await haproxyService.reloadConfig(resolved.node ?? undefined);
+							try {
+								await haproxyService.reloadConfig(nodeConfig);
+							} catch (reloadError) {
+								try {
+									await haproxyService.saveConfigFile(
+										targetPath,
+										previousContent,
+										nodeConfig,
+									);
+								} catch (rollbackSaveError) {
+									throw new Error(
+										`Reload failed and rollback failed. Reload error: ${toErrorMessage(reloadError, "Unknown reload error")}. Rollback error: ${toErrorMessage(rollbackSaveError, "Unknown rollback error")}`,
+									);
+								}
+
+								try {
+									await haproxyService.reloadConfig(nodeConfig);
+								} catch (rollbackReloadError) {
+									throw new Error(
+										`Reload failed; configuration content was rolled back, but rollback reload failed. Reload error: ${toErrorMessage(reloadError, "Unknown reload error")}. Rollback reload error: ${toErrorMessage(rollbackReloadError, "Unknown rollback reload error")}`,
+									);
+								}
+
+								throw new Error(
+									`Reload failed after save. Configuration content was rolled back to previous version. Reload error: ${toErrorMessage(reloadError, "Unknown reload error")}`,
+								);
+							}
 						}
 
 						return {
 							success: true,
-							data: { path: targetPath },
+							data: {
+								path: targetPath,
+								remoteFeedback: mutation.remoteFeedback,
+							},
 							message: "Config file saved",
 						};
 					} catch (error) {
@@ -598,7 +734,7 @@ export function createHAProxyController() {
 					body,
 					request,
 					set,
-				}): Promise<ApiResponse<{ path: string }>> => {
+				}): Promise<ApiResponse<ConfigMutationResponse>> => {
 					try {
 						const nodeId = new URL(request.url).searchParams.get("nodeId");
 						const resolved = await resolveNodeConfig(nodeId);
@@ -623,7 +759,7 @@ export function createHAProxyController() {
 							};
 						}
 
-						await haproxyService.deleteConfigFile(
+						const mutation = await haproxyService.deleteConfigFile(
 							targetPath,
 							resolved.node ?? undefined,
 						);
@@ -641,7 +777,10 @@ export function createHAProxyController() {
 
 						return {
 							success: true,
-							data: { path: targetPath },
+							data: {
+								path: targetPath,
+								remoteFeedback: mutation.remoteFeedback,
+							},
 							message: "Config file deleted",
 						};
 					} catch (error) {

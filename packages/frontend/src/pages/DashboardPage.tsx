@@ -1,4 +1,4 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import {
 	lazy,
 	Suspense,
@@ -10,18 +10,31 @@ import {
 } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
+import {
+	HAProxyStatsGraphs,
+	type StatsHistoryPoint,
+} from "@/components/dashboard/haproxy-stats-graphs";
 import { StatsCard } from "@/components/dashboard/stats-card";
 import { type DashboardTab, Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
 	type DashboardSummary,
 	getDashboardSummary,
-	getHAProxyStatsDashboardHtml,
+	getHAProxyStatsCapabilities,
+	getHAProxyStatsSnapshot,
+	type HAProxyStatsCapabilities,
+	type HAProxyStatsRequestedSource,
 } from "@/lib/api";
 import { env } from "@/lib/env";
 import { useAuth } from "@/providers/auth-provider";
 import { useTheme } from "@/providers/theme-provider";
+
+const HAPROXY_STATS_SETUP_DOCS_URL =
+	"https://www.haproxy.com/documentation/haproxy-configuration-tutorials/alerts-and-monitoring/statistics/";
+const STATS_POLL_INTERVAL_MS = 5000;
+const STATS_HISTORY_WINDOW_MS = 15 * 60 * 1000;
 
 const QuickActions = lazy(() => import("@/components/dashboard/quick-actions"));
 const HAProxyConfigEditor = lazy(
@@ -52,6 +65,16 @@ export default function DashboardPage() {
 	const [summary, setSummary] = useState<DashboardSummary>(initialState);
 	const [statsError, setStatsError] = useState<string | null>(null);
 	const [statsLoading, setStatsLoading] = useState(false);
+	const [statsCapabilities, setStatsCapabilities] =
+		useState<HAProxyStatsCapabilities | null>(null);
+	const [statsSnapshot, setStatsSnapshot] =
+		useState<DashboardSummary["stats"]>(null);
+	const [statsHistory, setStatsHistory] = useState<StatsHistoryPoint[]>([]);
+	const [statsSource, setStatsSource] =
+		useState<HAProxyStatsRequestedSource>("auto");
+	const [statsView, setStatsView] = useState<
+		"auto" | "graph" | "classic" | "split"
+	>("auto");
 	const summaryRequestSequenceRef = useRef(0);
 
 	const activeTab = useMemo<DashboardTab>(() => {
@@ -111,10 +134,11 @@ export default function DashboardPage() {
 			includeStats:
 				(activeTab === "overview" || activeTab === "stats") &&
 				Boolean(debouncedSelectedNodeId),
+			statsSource,
 		});
-	}, [activeTab, debouncedSelectedNodeId]);
+	}, [activeTab, debouncedSelectedNodeId, statsSource]);
 
-	useEffect(() => {
+	const loadSummary = useCallback(async () => {
 		let mounted = true;
 		const requestSequence = ++summaryRequestSequenceRef.current;
 		setLoading(true);
@@ -123,7 +147,7 @@ export default function DashboardPage() {
 			stats: null,
 		}));
 
-		refreshSummary()
+		await refreshSummary()
 			.then((response) => {
 				if (!mounted || requestSequence !== summaryRequestSequenceRef.current) {
 					return;
@@ -154,11 +178,28 @@ export default function DashboardPage() {
 	}, [refreshSummary, selectedNodeId, setSelectedNodeId]);
 
 	useEffect(() => {
+		let mounted = true;
+
+		loadSummary().then((cleanup) => {
+			if (!mounted && cleanup) {
+				cleanup();
+			}
+		});
+
+		return () => {
+			mounted = false;
+		};
+	}, [loadSummary]);
+
+	useEffect(() => {
 		if (activeTab !== "stats") {
 			return;
 		}
 
 		if (!debouncedSelectedNodeId) {
+			setStatsCapabilities(null);
+			setStatsSnapshot(null);
+			setStatsHistory([]);
 			setStatsLoading(false);
 			setStatsError("Please select a node before opening HAProxy stats.");
 			return;
@@ -168,18 +209,25 @@ export default function DashboardPage() {
 		setStatsLoading(true);
 		setStatsError(null);
 
-		getHAProxyStatsDashboardHtml(theme, debouncedSelectedNodeId)
-			.then(() => {
-				// We don't need to store HTML; the iframe will load the stats UI directly.
+		getHAProxyStatsCapabilities(debouncedSelectedNodeId)
+			.then((capabilities) => {
+				if (!mounted) {
+					return;
+				}
+
+				setStatsCapabilities(capabilities);
 			})
 			.catch((error) => {
-				if (mounted) {
-					setStatsError(
-						error instanceof Error
-							? error.message
-							: "Unable to load HAProxy stats screen",
-					);
+				if (!mounted) {
+					return;
 				}
+
+				setStatsCapabilities(null);
+				setStatsError(
+					error instanceof Error
+						? error.message
+						: "Unable to load HAProxy stats capabilities",
+				);
 			})
 			.finally(() => {
 				if (mounted) {
@@ -190,7 +238,120 @@ export default function DashboardPage() {
 		return () => {
 			mounted = false;
 		};
-	}, [activeTab, debouncedSelectedNodeId, theme]);
+	}, [activeTab, debouncedSelectedNodeId]);
+
+	useEffect(() => {
+		if (
+			activeTab !== "stats" ||
+			!debouncedSelectedNodeId ||
+			!statsCapabilities
+		) {
+			return;
+		}
+
+		const supportsGraph = statsCapabilities.availableViews.includes("graph");
+		if (!supportsGraph) {
+			setStatsSnapshot(null);
+			setStatsHistory([]);
+			return;
+		}
+
+		let mounted = true;
+		let intervalId: ReturnType<typeof setInterval> | null = null;
+
+		const pollSnapshot = async () => {
+			try {
+				const snapshot = await getHAProxyStatsSnapshot({
+					nodeId: debouncedSelectedNodeId,
+					source: statsSource,
+				});
+
+				if (!mounted) {
+					return;
+				}
+
+				setStatsSnapshot(snapshot);
+				setStatsError((current) =>
+					current?.includes("snapshot") ? null : current,
+				);
+
+				if (!snapshot.snapshot) {
+					return;
+				}
+
+				const snapshotData = snapshot.snapshot;
+
+				const collectedAtMs = Number.isFinite(
+					Date.parse(snapshotData.collectedAt),
+				)
+					? Date.parse(snapshotData.collectedAt)
+					: Date.now();
+
+				setStatsHistory((previous) => {
+					const latestPoint = previous[previous.length - 1];
+					const elapsedSeconds = latestPoint
+						? Math.max(1, (collectedAtMs - latestPoint.timestamp) / 1000)
+						: 1;
+
+					const throughputInBps = latestPoint
+						? Math.max(
+								0,
+								(snapshotData.totals.bytesIn -
+									latestPoint.bytesInCounter) /
+									elapsedSeconds,
+							)
+						: 0;
+
+					const throughputOutBps = latestPoint
+						? Math.max(
+								0,
+								(snapshotData.totals.bytesOut -
+									latestPoint.bytesOutCounter) /
+									elapsedSeconds,
+							)
+						: 0;
+
+					const nextPoint: StatsHistoryPoint = {
+						timestamp: collectedAtMs,
+						activeSessions: snapshotData.totals.activeSessions,
+						connectionsRate: snapshotData.totals.connectionsRate,
+						throughputInBps,
+						throughputOutBps,
+						bytesInCounter: snapshotData.totals.bytesIn,
+						bytesOutCounter: snapshotData.totals.bytesOut,
+					};
+
+					const withNext = [...previous, nextPoint];
+					const threshold = collectedAtMs - STATS_HISTORY_WINDOW_MS;
+					return withNext
+						.filter((point) => point.timestamp >= threshold)
+						.slice(-240);
+				});
+			} catch (error) {
+				if (!mounted) {
+					return;
+				}
+
+				setStatsError(
+					error instanceof Error
+						? `Unable to refresh stats snapshot: ${error.message}`
+						: "Unable to refresh stats snapshot",
+				);
+			}
+		};
+
+		void pollSnapshot();
+		intervalId = setInterval(() => {
+			void pollSnapshot();
+		}, STATS_POLL_INTERVAL_MS);
+
+		return () => {
+			mounted = false;
+			if (intervalId) {
+				clearInterval(intervalId);
+			}
+		};
+	}, [activeTab, debouncedSelectedNodeId, statsCapabilities, statsSource]);
 
 	const statsCards = useMemo(
 		() => [
@@ -223,6 +384,64 @@ export default function DashboardPage() {
 		query.set("nodeId", debouncedSelectedNodeId);
 		return `${env.VITE_BACKEND_URL}/haproxy/stats/ui?${query.toString()}`;
 	}, [debouncedSelectedNodeId, theme]);
+
+	const supportsGraphView =
+		statsCapabilities?.availableViews.includes("graph") ?? false;
+	const supportsClassicView =
+		statsCapabilities?.availableViews.includes("classic") ?? false;
+
+	const resolvedStatsView = useMemo<
+		"none" | "graph" | "classic" | "split"
+	>(() => {
+		if (!statsCapabilities) {
+			return "none";
+		}
+
+		if (statsView === "graph") {
+			if (supportsGraphView) {
+				return "graph";
+			}
+			if (supportsClassicView) {
+				return "classic";
+			}
+			return "none";
+		}
+
+		if (statsView === "classic") {
+			if (supportsClassicView) {
+				return "classic";
+			}
+			if (supportsGraphView) {
+				return "graph";
+			}
+			return "none";
+		}
+
+		if (statsView === "split") {
+			if (supportsGraphView && supportsClassicView) {
+				return "split";
+			}
+			if (supportsGraphView) {
+				return "graph";
+			}
+			if (supportsClassicView) {
+				return "classic";
+			}
+			return "none";
+		}
+
+		if (supportsGraphView && supportsClassicView) {
+			return "split";
+		}
+		if (supportsGraphView) {
+			return "graph";
+		}
+		if (supportsClassicView) {
+			return "classic";
+		}
+
+		return "none";
+	}, [statsCapabilities, statsView, supportsClassicView, supportsGraphView]);
 
 	const selectedNode = useMemo(
 		() => summary.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -339,6 +558,10 @@ export default function DashboardPage() {
 		},
 		[setSearchParams],
 	);
+
+	const handleReloadStatus = useCallback(() => {
+		void loadSummary();
+	}, [loadSummary]);
 
 	return (
 		<div className="flex min-h-screen bg-background">
@@ -474,12 +697,26 @@ export default function DashboardPage() {
 								<Card>
 									<CardHeader className="flex flex-row items-center justify-between gap-3">
 										<CardTitle>Selected Node Status</CardTitle>
-										<div className="inline-flex items-center gap-2 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">
-											<span
-												className={`h-2.5 w-2.5 rounded-full ${haproxyStatusDotClass}`}
-												title={`HAProxy ${haproxyStatusLabel}`}
-											/>
-											<span>{haproxyStatusLabel}</span>
+										<div className="flex items-center gap-2">
+											<div className="inline-flex items-center gap-2 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">
+												<span
+													className={`h-2.5 w-2.5 rounded-full ${haproxyStatusDotClass}`}
+													title={`HAProxy ${haproxyStatusLabel}`}
+												/>
+												<span>{haproxyStatusLabel}</span>
+											</div>
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												onClick={handleReloadStatus}
+												disabled={loading}
+											>
+												<RefreshCw
+													className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+												/>
+												Reload Status
+											</Button>
 										</div>
 									</CardHeader>
 									<CardContent>
@@ -657,8 +894,17 @@ export default function DashboardPage() {
 									HAProxy Stats
 								</h2>
 								<p className="text-sm text-muted-foreground">
-									Live stats dashboard rendered inside your secure workspace.
+									Live stats dashboard with Graph View (socket/CSV) and Classic
+									View (iframe).
 								</p>
+								<a
+									href={HAPROXY_STATS_SETUP_DOCS_URL}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="mt-2 inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline"
+								>
+									How to configure HAProxy Stats dashboard
+								</a>
 								{showMonitoredWarning && (
 									<span className="mt-2 inline-flex rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/50 dark:text-amber-200">
 										Monitored node selected: stats/config actions may be
@@ -667,11 +913,103 @@ export default function DashboardPage() {
 								)}
 							</div>
 
+							<Card>
+								<CardContent className="grid gap-3 pt-6 md:grid-cols-[1fr_auto]">
+									<div className="space-y-2">
+										<p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+											Display Mode
+										</p>
+										<div className="flex flex-wrap gap-2">
+											<Button
+												type="button"
+												variant={statsView === "auto" ? "default" : "outline"}
+												size="sm"
+												onClick={() => setStatsView("auto")}
+											>
+												Auto
+											</Button>
+											<Button
+												type="button"
+												variant={statsView === "graph" ? "default" : "outline"}
+												size="sm"
+												onClick={() => setStatsView("graph")}
+												disabled={!supportsGraphView}
+											>
+												Graph
+											</Button>
+											<Button
+												type="button"
+												variant={
+													statsView === "classic" ? "default" : "outline"
+												}
+												size="sm"
+												onClick={() => setStatsView("classic")}
+												disabled={!supportsClassicView}
+											>
+												Classic
+											</Button>
+											<Button
+												type="button"
+												variant={statsView === "split" ? "default" : "outline"}
+												size="sm"
+												onClick={() => setStatsView("split")}
+												disabled={!(supportsGraphView && supportsClassicView)}
+											>
+												Split
+											</Button>
+										</div>
+									</div>
+
+									<div className="space-y-2">
+										<p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+											Graph Source
+										</p>
+										<div className="flex flex-wrap gap-2">
+											<Button
+												type="button"
+												variant={statsSource === "auto" ? "default" : "outline"}
+												size="sm"
+												onClick={() => setStatsSource("auto")}
+											>
+												Auto
+											</Button>
+											<Button
+												type="button"
+												variant={
+													statsSource === "socket" ? "default" : "outline"
+												}
+												size="sm"
+												onClick={() => setStatsSource("socket")}
+												disabled={!statsCapabilities?.supportsSocket}
+											>
+												Socket
+											</Button>
+											<Button
+												type="button"
+												variant={statsSource === "url" ? "default" : "outline"}
+												size="sm"
+												onClick={() => setStatsSource("url")}
+												disabled={!statsCapabilities?.supportsUrl}
+											>
+												URL
+											</Button>
+										</div>
+									</div>
+								</CardContent>
+							</Card>
+
 							{statsLoading && (
 								<div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
-									Loading stats dashboard...
+									Loading stats capabilities...
 								</div>
 							)}
+
+							{statsCapabilities?.notes &&
+								statsCapabilities.notes.length > 0 && (
+									<div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+										{statsCapabilities.notes.join(" ")}
+									</div>
+								)}
 
 							{statsError && (
 								<div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -680,13 +1018,37 @@ export default function DashboardPage() {
 								</div>
 							)}
 
-							{!statsError && statsUiSrc && (
-								<iframe
-									title="HAProxy Stats Dashboard"
-									src={statsUiSrc}
-									className="h-[calc(100vh-180px)] w-full rounded-lg border border-border bg-white"
-									sandbox="allow-same-origin allow-scripts allow-forms"
-								/>
+							{(resolvedStatsView === "graph" ||
+								resolvedStatsView === "split") &&
+								(statsSnapshot?.snapshot ? (
+									<HAProxyStatsGraphs
+										snapshot={statsSnapshot.snapshot}
+										history={statsHistory}
+										dataSource={statsSnapshot.dataSource}
+									/>
+								) : (
+									<div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
+										Waiting for graph data snapshot...
+									</div>
+								))}
+
+							{(resolvedStatsView === "classic" ||
+								resolvedStatsView === "split") &&
+								supportsClassicView &&
+								statsUiSrc && (
+									<iframe
+										title="HAProxy Stats Dashboard"
+										src={statsUiSrc}
+										className="h-[calc(100vh-180px)] w-full rounded-lg border border-border bg-white"
+										sandbox="allow-same-origin allow-scripts allow-forms"
+									/>
+								)}
+
+							{resolvedStatsView === "none" && (
+								<div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
+									No HAProxy stats source is available for this node yet.
+									Configure a stats socket or stats URL in Node Configuration.
+								</div>
 							)}
 						</section>
 					) : activeTab === "config" ? (
@@ -711,6 +1073,9 @@ export default function DashboardPage() {
 								<HAProxyConfigEditor
 									selectedNodeId={selectedNodeId}
 									selectedNodeName={selectedNode?.name ?? null}
+									selectedNodeIsRemote={Boolean(
+										selectedNode && !selectedNode.isLocalService,
+									)}
 									selectedNodeConfigPath={
 										selectedNode?.haproxyConfigPath ?? null
 									}

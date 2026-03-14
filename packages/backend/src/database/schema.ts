@@ -36,6 +36,7 @@ export const nodes = pgTable("nodes", {
 	logStrategy: logStrategyEnum("log_strategy").default("docker").notNull(),
 	logPath: text("log_path"),
 	haproxyStatsUrl: text("haproxy_stats_url"),
+	haproxySocketPath: text("haproxy_socket_path"),
 	haproxyApiUrl: text("haproxy_api_url"),
 	haproxyContainerRef: text("haproxy_container_ref"),
 	haproxyConfigPath: text("haproxy_config_path"),
