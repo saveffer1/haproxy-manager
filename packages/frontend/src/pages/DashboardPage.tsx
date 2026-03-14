@@ -10,12 +10,16 @@ import {
 	type DashboardSummary,
 	getDashboardSummary,
 	getHAProxyStatsDashboardHtml,
+	reloadHAProxyConfig,
 } from "@/lib/api";
 import { env } from "@/lib/env";
 import { useAuth } from "@/providers/auth-provider";
 import { useTheme } from "@/providers/theme-provider";
 
 const QuickActions = lazy(() => import("@/components/dashboard/quick-actions"));
+const HAProxyConfigEditor = lazy(
+	() => import("@/components/dashboard/haproxy-config-editor"),
+);
 
 const initialState: DashboardSummary = {
 	health: null,
@@ -32,10 +36,16 @@ export default function DashboardPage() {
 	const [summary, setSummary] = useState<DashboardSummary>(initialState);
 	const [statsError, setStatsError] = useState<string | null>(null);
 	const [statsLoading, setStatsLoading] = useState(false);
+	const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+	const [actionError, setActionError] = useState<string | null>(null);
 
 	const activeTab = useMemo<DashboardTab>(() => {
 		const tab = searchParams.get("tab");
-		return tab === "stats" ? "stats" : "overview";
+		if (tab === "stats" || tab === "config") {
+			return tab;
+		}
+
+		return "overview";
 	}, [searchParams]);
 
 	const setActiveTab = useCallback(
@@ -141,6 +151,19 @@ export default function DashboardPage() {
 		await logout();
 	};
 
+	const handleReloadFromQuickAction = useCallback(async () => {
+		setActionFeedback(null);
+		setActionError(null);
+		try {
+			await reloadHAProxyConfig();
+			setActionFeedback("HAProxy reload requested successfully");
+		} catch (error) {
+			setActionError(
+				error instanceof Error ? error.message : "Failed to reload HAProxy",
+			);
+		}
+	}, []);
+
 	const statsUiSrc = useMemo(() => {
 		const query = new URLSearchParams({ theme });
 		return `${env.VITE_BACKEND_URL}/haproxy/stats/ui?${query.toString()}`;
@@ -165,6 +188,19 @@ export default function DashboardPage() {
 						<DashboardSkeleton />
 					) : activeTab === "overview" ? (
 						<>
+							{actionError && (
+								<div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+									<AlertTriangle className="h-4 w-4" />
+									{actionError}
+								</div>
+							)}
+
+							{actionFeedback && (
+								<div className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+									{actionFeedback}
+								</div>
+							)}
+
 							{summary.error && (
 								<div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
 									<AlertTriangle className="h-4 w-4" />
@@ -228,11 +264,15 @@ export default function DashboardPage() {
 								</Card>
 
 								<Suspense fallback={<DashboardSkeleton />}>
-									<QuickActions onOpenStats={() => setActiveTab("stats")} />
+									<QuickActions
+										onOpenStats={() => setActiveTab("stats")}
+										onOpenConfigEditor={() => setActiveTab("config")}
+										onReloadConfig={handleReloadFromQuickAction}
+									/>
 								</Suspense>
 							</section>
 						</>
-					) : (
+					) : activeTab === "stats" ? (
 						<section className="space-y-4">
 							<div>
 								<h2 className="text-xl font-semibold text-foreground">
@@ -264,6 +304,22 @@ export default function DashboardPage() {
 									sandbox="allow-same-origin allow-scripts allow-forms"
 								/>
 							)}
+						</section>
+					) : (
+						<section className="space-y-4">
+							<div>
+								<h2 className="text-xl font-semibold text-foreground">
+									HAProxy Config Management
+								</h2>
+								<p className="text-sm text-muted-foreground">
+									Create and edit conf.d files with Monaco editor and reload
+									HAProxy when ready.
+								</p>
+							</div>
+
+							<Suspense fallback={<DashboardSkeleton />}>
+								<HAProxyConfigEditor />
+							</Suspense>
 						</section>
 					)}
 				</main>

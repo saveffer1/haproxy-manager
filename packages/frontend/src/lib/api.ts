@@ -44,6 +44,12 @@ export type DashboardSummary = {
 	error?: string;
 };
 
+export type HAProxyConfigFile = {
+	path: string;
+	size: number;
+	updatedAt: string;
+};
+
 type ThemeMode = "light" | "dark";
 
 type BetterAuthDefaultUserResponse = {
@@ -229,6 +235,55 @@ async function postJsonRaw<T>(path: string, payload: unknown): Promise<T> {
 	return (await response.json()) as T;
 }
 
+async function putJsonRaw<T>(path: string, payload: unknown): Promise<T> {
+	const apiKeyHeaders = buildApiKeyHeaders();
+
+	const response = await fetch(`${env.VITE_BACKEND_URL}${path}`, {
+		method: "PUT",
+		headers: {
+			"Content-Type": "application/json",
+			...apiKeyHeaders,
+		},
+		credentials: "include",
+		body: JSON.stringify(payload),
+	});
+
+	if (!response.ok) {
+		const message = await parseErrorMessage(response);
+		throw new Error(`${message} (${response.status})`);
+	}
+
+	if (response.status === 204) {
+		return {} as T;
+	}
+
+	return (await response.json()) as T;
+}
+
+async function deleteJsonRaw<T>(path: string): Promise<T> {
+	const apiKeyHeaders = buildApiKeyHeaders();
+
+	const response = await fetch(`${env.VITE_BACKEND_URL}${path}`, {
+		method: "DELETE",
+		headers: {
+			"Content-Type": "application/json",
+			...apiKeyHeaders,
+		},
+		credentials: "include",
+	});
+
+	if (!response.ok) {
+		const message = await parseErrorMessage(response);
+		throw new Error(`${message} (${response.status})`);
+	}
+
+	if (response.status === 204) {
+		return {} as T;
+	}
+
+	return (await response.json()) as T;
+}
+
 async function apiFetchText(
 	path: string,
 	options: { includeApiKey?: boolean } = {},
@@ -389,4 +444,98 @@ export async function getHAProxyStatsDashboardHtml(theme: ThemeMode) {
 	return apiFetchText(`/haproxy/stats/ui?${query.toString()}`, {
 		includeApiKey: false,
 	});
+}
+
+export async function listHAProxyConfigFiles(): Promise<HAProxyConfigFile[]> {
+	const response = await getJsonRaw<ApiEnvelope<HAProxyConfigFile[]>>(
+		"/haproxy/config-files",
+	);
+
+	if (!response.success) {
+		throw new Error(response.error ?? "Failed to list HAProxy config files");
+	}
+
+	return response.data ?? [];
+}
+
+export async function getHAProxyConfigFileContent(filePath: string): Promise<string> {
+	const query = new URLSearchParams({ path: filePath });
+	const response = await getJsonRaw<ApiEnvelope<{ path: string; content: string }>>(
+		`/haproxy/config-files/content?${query.toString()}`,
+	);
+
+	if (!response.success || !response.data) {
+		throw new Error(response.error ?? "Failed to load HAProxy config file");
+	}
+
+	return response.data.content;
+}
+
+export async function createHAProxyConfigFile(
+	filePath: string,
+	content = "",
+	reload = true,
+) {
+	const response = await postJsonRaw<ApiEnvelope<{ path: string }>>(
+		"/haproxy/config-files",
+		{
+			path: filePath,
+			content,
+			reload,
+		},
+	);
+
+	if (!response.success) {
+		throw new Error(response.error ?? "Failed to create HAProxy config file");
+	}
+
+	return response;
+}
+
+export async function saveHAProxyConfigFile(
+	filePath: string,
+	content: string,
+	reload = true,
+) {
+	const response = await putJsonRaw<ApiEnvelope<{ path: string }>>(
+		"/haproxy/config-files/content",
+		{
+			path: filePath,
+			content,
+			reload,
+		},
+	);
+
+	if (!response.success) {
+		throw new Error(response.error ?? "Failed to save HAProxy config file");
+	}
+
+	return response;
+}
+
+export async function deleteHAProxyConfigFile(filePath: string, reload = true) {
+	const query = new URLSearchParams({
+		path: filePath,
+		reload: String(reload),
+	});
+	const response = await deleteJsonRaw<ApiEnvelope<{ path: string }>>(
+		`/haproxy/config-files?${query.toString()}`,
+	);
+
+	if (!response.success) {
+		throw new Error(response.error ?? "Failed to delete HAProxy config file");
+	}
+
+	return response;
+}
+
+export async function reloadHAProxyConfig() {
+	const response = await requestTreaty<ApiEnvelope<unknown>>(
+		api.haproxy.reload.post(),
+	);
+	if (!response.success) {
+		throw new Error(response.error ?? "Failed to reload HAProxy configuration");
+	}
+
+	return response;
 }

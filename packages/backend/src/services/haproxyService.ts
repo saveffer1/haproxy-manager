@@ -1,4 +1,11 @@
+import { existsSync } from "node:fs";
+import * as path from "node:path";
 import { env } from "../lib/env";
+
+type ConfigFilePath = {
+	relativePath: string;
+	absPath: string;
+};
 
 export type HAProxyStats = {
 	status: string;
@@ -30,9 +37,41 @@ export type HAProxyBackend = {
 	}>;
 };
 
+export type HAProxyConfigFile = {
+	path: string;
+	size: number;
+	updatedAt: string;
+};
+
 export class HAProxyService {
 	private socketPath = env.HAPROXY_SOCKET_PATH;
 	private socketEnabled = env.HAPROXY_SOCKET_ENABLED;
+	private configDir = this.resolveConfigDir();
+
+	private resolveConfigDir() {
+		const configured = env.HAPROXY_CONFIG_DIR;
+
+		if (path.isAbsolute(configured)) {
+			return configured;
+		}
+
+		const directCandidate = path.resolve(process.cwd(), configured);
+		if (existsSync(directCandidate)) {
+			return directCandidate;
+		}
+
+		const workspaceCandidate = path.resolve(
+			process.cwd(),
+			"..",
+			"..",
+			configured,
+		);
+		if (existsSync(workspaceCandidate)) {
+			return workspaceCandidate;
+		}
+
+		return directCandidate;
+	}
 
 	private isExpectedSocketError(error: unknown) {
 		if (!(error instanceof Error)) {
@@ -238,13 +277,218 @@ export class HAProxyService {
 
 	async reloadConfig(): Promise<boolean> {
 		try {
-			// HAProxy reload via shell command (requires proper permissions)
-			// This is a graceful reload that doesn't drop connections
-			console.log("HAProxy config reload requested");
+			const { exec } = await import("node:child_process");
+			const { promisify } = await import("node:util");
+
+			const execAsync = promisify(exec);
+			const command = env.HAPROXY_RELOAD_COMMAND.trim();
+
+			if (!command) {
+				throw new Error("HAProxy reload command is not configured");
+			}
+
+			await this.validateConfig();
+
+			await execAsync(command, {
+				cwd: process.cwd(),
+				timeout: 15_000,
+			});
+
+			console.log("HAProxy config reloaded successfully");
 			return true;
 		} catch (error) {
 			console.error("Error reloading HAProxy config:", error);
 			throw new Error("Failed to reload HAProxy configuration");
+		}
+	}
+
+	private async validateConfig(): Promise<void> {
+		const { exec } = await import("node:child_process");
+		const { promisify } = await import("node:util");
+
+		const execAsync = promisify(exec);
+		const command = env.HAPROXY_VALIDATE_COMMAND.trim();
+
+		if (!command) {
+			throw new Error("HAProxy validation command is not configured");
+		}
+
+		try {
+			await execAsync(command, {
+				cwd: process.cwd(),
+				timeout: 15_000,
+			});
+		} catch (error) {
+			const commandError = error as {
+				stderr?: string;
+				stdout?: string;
+				message?: string;
+			};
+
+			const details =
+				commandError.stderr?.trim() ||
+				commandError.stdout?.trim() ||
+				commandError.message ||
+				"Unknown validation error";
+
+			throw new Error(`HAProxy config validation failed: ${details}`);
+		}
+	}
+
+	private normalizeConfigFilePath(rawPath: string): ConfigFilePath {
+		const normalizedPath = rawPath.trim().replace(/\\/g, "/");
+
+		if (!normalizedPath) {
+			throw new Error("Config file path is required");
+		}
+
+		if (
+			normalizedPath.includes("..") ||
+			normalizedPath.startsWith("/") ||
+			normalizedPath.startsWith(".")
+		) {
+			throw new Error("Invalid config file path");
+		}
+
+		if (!normalizedPath.toLowerCase().endsWith(".cfg")) {
+			throw new Error("Only .cfg files are allowed");
+		}
+
+		const normalized = normalizedPath.split("/").filter(Boolean).join("/");
+		if (!normalized) {
+			throw new Error("Invalid config file path");
+		}
+
+		const joined = path.join(this.configDir, normalized);
+		const resolvedRoot = path.resolve(this.configDir);
+		const resolvedFile = path.resolve(joined);
+
+		if (!resolvedFile.startsWith(resolvedRoot)) {
+			throw new Error("Config file path escapes conf.d directory");
+		}
+
+		return {
+			relativePath: normalized,
+			absPath: resolvedFile,
+		};
+	}
+
+	private async walkConfigFiles(
+		dirPath: string,
+		rootPath: string,
+		files: HAProxyConfigFile[],
+	): Promise<void> {
+		const fs = await import("node:fs/promises");
+		const path = await import("node:path");
+
+		const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+		for (const entry of entries) {
+			const absEntryPath = path.join(dirPath, entry.name);
+
+			if (entry.isDirectory()) {
+				await this.walkConfigFiles(absEntryPath, rootPath, files);
+				continue;
+			}
+
+			if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".cfg")) {
+				continue;
+			}
+
+			const stat = await fs.stat(absEntryPath);
+			const relativePath = path
+				.relative(rootPath, absEntryPath)
+				.replace(/\\/g, "/");
+
+			files.push({
+				path: relativePath,
+				size: stat.size,
+				updatedAt: stat.mtime.toISOString(),
+			});
+		}
+	}
+
+	async listConfigFiles(): Promise<HAProxyConfigFile[]> {
+		const fs = await import("node:fs/promises");
+
+		await fs.mkdir(this.configDir, { recursive: true });
+
+		const files: HAProxyConfigFile[] = [];
+		await this.walkConfigFiles(this.configDir, this.configDir, files);
+
+		return files.sort((a, b) => a.path.localeCompare(b.path));
+	}
+
+	async getConfigFileContent(filePath: string): Promise<string> {
+		const fs = await import("node:fs/promises");
+		const target = this.normalizeConfigFilePath(filePath);
+
+		return fs.readFile(target.absPath, "utf8");
+	}
+
+	async saveConfigFile(filePath: string, content: string): Promise<void> {
+		const fs = await import("node:fs/promises");
+		const path = await import("node:path");
+		const target = this.normalizeConfigFilePath(filePath);
+		const previousContent = await fs.readFile(target.absPath, "utf8");
+
+		await fs.mkdir(path.dirname(target.absPath), { recursive: true });
+		await fs.writeFile(target.absPath, content, "utf8");
+
+		try {
+			await this.validateConfig();
+		} catch (error) {
+			await fs.writeFile(target.absPath, previousContent, "utf8");
+			throw new Error(
+				error instanceof Error
+					? `${error.message}. Save was rolled back.`
+					: "HAProxy config validation failed. Save was rolled back.",
+			);
+		}
+	}
+
+	async createConfigFile(filePath: string, content = ""): Promise<void> {
+		const fs = await import("node:fs/promises");
+		const path = await import("node:path");
+		const target = this.normalizeConfigFilePath(filePath);
+
+		await fs.mkdir(path.dirname(target.absPath), { recursive: true });
+		const handle = await fs.open(target.absPath, "wx");
+		try {
+			if (content) {
+				await handle.writeFile(content, "utf8");
+			}
+		} finally {
+			await handle.close();
+		}
+
+		try {
+			await this.validateConfig();
+		} catch (error) {
+			await fs.rm(target.absPath, { force: true });
+			throw new Error(
+				error instanceof Error
+					? `${error.message}. File creation was rolled back.`
+					: "HAProxy config validation failed. File creation was rolled back.",
+			);
+		}
+	}
+
+	async deleteConfigFile(filePath: string): Promise<void> {
+		const fs = await import("node:fs/promises");
+		const target = this.normalizeConfigFilePath(filePath);
+		const previousContent = await fs.readFile(target.absPath, "utf8");
+		await fs.rm(target.absPath, { force: false });
+
+		try {
+			await this.validateConfig();
+		} catch (error) {
+			await fs.writeFile(target.absPath, previousContent, "utf8");
+			throw new Error(
+				error instanceof Error
+					? `${error.message}. Delete was rolled back.`
+					: "HAProxy config validation failed. Delete was rolled back.",
+			);
 		}
 	}
 }

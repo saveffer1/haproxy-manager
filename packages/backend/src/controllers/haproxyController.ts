@@ -4,6 +4,7 @@ import { env } from "../lib/env";
 import {
 	type HAProxyBackend,
 	type HAProxyConfig,
+	type HAProxyConfigFile,
 	type HAProxyStats,
 	haproxyService,
 } from "../services/haproxyService";
@@ -138,6 +139,192 @@ export function createHAProxyController() {
 					};
 				}
 			})
+			.get(
+				"/config-files",
+				async (): Promise<ApiResponse<HAProxyConfigFile[]>> => {
+					try {
+						const files = await haproxyService.listConfigFiles();
+						return {
+							success: true,
+							data: files,
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to list HAProxy config files",
+						};
+					}
+				},
+			)
+			.get(
+				"/config-files/content",
+				async ({
+					query,
+				}: {
+					query: { path?: string };
+				}): Promise<ApiResponse<{ path: string; content: string }>> => {
+					try {
+						if (!query.path) {
+							return {
+								success: false,
+								error: "Query path is required",
+							};
+						}
+
+						const content = await haproxyService.getConfigFileContent(query.path);
+						return {
+							success: true,
+							data: {
+								path: query.path,
+								content,
+							},
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to read HAProxy config file",
+						};
+					}
+				},
+			)
+			.post(
+				"/config-files",
+				async ({ body }): Promise<ApiResponse<{ path: string }>> => {
+					try {
+						const payload = body as {
+							path?: string;
+							content?: string;
+							reload?: boolean;
+						};
+
+						const targetPath = payload.path?.trim();
+						if (!targetPath) {
+							return {
+								success: false,
+								error: "Field 'path' is required",
+							};
+						}
+
+						await haproxyService.createConfigFile(
+							targetPath,
+							payload.content ?? "",
+						);
+
+						if (payload.reload ?? true) {
+							await haproxyService.reloadConfig();
+						}
+
+						return {
+							success: true,
+							data: { path: targetPath },
+							message: "Config file created",
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to create HAProxy config file",
+						};
+					}
+				},
+			)
+			.put(
+				"/config-files/content",
+				async ({ body }): Promise<ApiResponse<{ path: string }>> => {
+					try {
+						const payload = body as {
+							path?: string;
+							content?: string;
+							reload?: boolean;
+						};
+
+						const targetPath = payload.path?.trim();
+						if (!targetPath) {
+							return {
+								success: false,
+								error: "Field 'path' is required",
+							};
+						}
+
+						await haproxyService.saveConfigFile(
+							targetPath,
+							payload.content ?? "",
+						);
+
+						if (payload.reload ?? true) {
+							await haproxyService.reloadConfig();
+						}
+
+						return {
+							success: true,
+							data: { path: targetPath },
+							message: "Config file saved",
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to save HAProxy config file",
+						};
+					}
+				},
+			)
+			.delete(
+				"/config-files",
+				async ({ query, body }): Promise<ApiResponse<{ path: string }>> => {
+					try {
+						const payload = (body ?? {}) as {
+							path?: string;
+							reload?: boolean;
+						};
+						const targetPath = query.path ?? payload.path;
+
+						if (!targetPath) {
+							return {
+								success: false,
+								error: "Query path is required",
+							};
+						}
+
+						await haproxyService.deleteConfigFile(targetPath);
+
+						const shouldReload =
+							typeof payload.reload === "boolean"
+								? payload.reload
+								: query.reload
+									? query.reload !== "false"
+									: true;
+
+						if (shouldReload) {
+							await haproxyService.reloadConfig();
+						}
+
+						return {
+							success: true,
+							data: { path: targetPath },
+							message: "Config file deleted",
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to delete HAProxy config file",
+						};
+					}
+				},
+			)
 			// Get all backends with their servers - fetches via socket
 			.get("/backends", async (): Promise<ApiResponse<HAProxyBackend[]>> => {
 				try {

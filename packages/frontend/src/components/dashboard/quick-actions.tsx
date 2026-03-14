@@ -5,9 +5,15 @@ import { env } from "@/lib/env";
 
 type QuickActionsProps = {
 	onOpenStats: () => void;
+	onOpenConfigEditor: () => void;
+	onReloadConfig: () => void;
 };
 
-export default function QuickActions({ onOpenStats }: QuickActionsProps) {
+export default function QuickActions({
+	onOpenStats,
+	onOpenConfigEditor,
+	onReloadConfig,
+}: QuickActionsProps) {
 	const openApiDocsUrl = new URL("/openapi", env.VITE_BACKEND_URL).toString();
 
 	return (
@@ -16,7 +22,11 @@ export default function QuickActions({ onOpenStats }: QuickActionsProps) {
 				<CardTitle className="text-base">Quick Actions</CardTitle>
 			</CardHeader>
 			<CardContent className="space-y-3">
-				<Button className="w-full justify-start" variant="secondary">
+				<Button
+					className="w-full justify-start"
+					variant="secondary"
+					onClick={onReloadConfig}
+				>
 					<RefreshCw className="mr-2 h-4 w-4" />
 					Reload HAProxy Config
 				</Button>
@@ -39,6 +49,14 @@ export default function QuickActions({ onOpenStats }: QuickActionsProps) {
 				>
 					<TerminalSquare className="mr-2 h-4 w-4" />
 					Open HAProxy Stats Tab
+				</Button>
+				<Button
+					className="w-full justify-start"
+					variant="outline"
+					onClick={onOpenConfigEditor}
+				>
+					<TerminalSquare className="mr-2 h-4 w-4" />
+					Open Config Editor
 				</Button>
 			</CardContent>
 		</Card>

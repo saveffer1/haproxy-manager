@@ -24,4 +24,14 @@ export const env = cleanEnv(process.env, {
 	REDIS_URL: url({ default: "redis://localhost:6379" }),
 	HAPROXY_SOCKET_ENABLED: bool({ default: process.platform !== "win32" }),
 	HAPROXY_SOCKET_PATH: str({ default: "/var/run/haproxy.sock" }),
+	HAPROXY_CONFIG_DIR: str({ default: "./haproxy/conf.d" }),
+	HAPROXY_RELOAD_COMMAND: str({
+		default: process.platform === "win32"
+			? "docker compose restart haproxy"
+			: "docker compose restart haproxy",
+	}),
+	HAPROXY_VALIDATE_COMMAND: str({
+		default:
+			"docker compose exec -T haproxy haproxy -f /usr/local/etc/haproxy/conf.d -c",
+	}),
 });

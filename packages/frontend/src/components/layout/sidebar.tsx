@@ -1,8 +1,8 @@
-import { BarChart3, LayoutDashboard, X } from "lucide-react";
+import { BarChart3, FileCode2, LayoutDashboard, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type DashboardTab = "overview" | "stats";
+export type DashboardTab = "overview" | "stats" | "config";
 
 type SidebarProps = {
 	mobileOpen: boolean;
@@ -14,6 +14,7 @@ type SidebarProps = {
 const navItems = [
 	{ label: "Overview", icon: LayoutDashboard, tab: "overview" as const },
 	{ label: "HAProxy Stats", icon: BarChart3, tab: "stats" as const },
+	{ label: "Config Editor", icon: FileCode2, tab: "config" as const },
 ];
 
 export function Sidebar({

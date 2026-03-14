@@ -39,7 +39,12 @@ export function AppRouter() {
 	return (
 		<ThemeProvider>
 			<AuthProvider>
-				<BrowserRouter>
+				<BrowserRouter
+					future={{
+						v7_startTransition: true,
+						v7_relativeSplatPath: true,
+					}}
+				>
 					<Suspense fallback={<RouteSkeleton />}>
 						<Routes>
 							<Route path="/" element={<AuthAwareRoot />} />
