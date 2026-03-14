@@ -229,19 +229,46 @@ export function registerHaproxyLanguage(monaco: typeof monacoEditor) {
 			tokenizer: {
 				root: [
 					[/#.*/, "comment"],
-					[/\b(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?):\d{1,5}\b/, "number"],
+					[
+						/\b(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?):\d{1,5}\b/,
+						"number",
+					],
 					[/\*:\d{1,5}\b/, "number"],
 					[/\bciphers\s+[^\s#]+/, "string"],
 					[/\b(?:\d+|\d+s)\b/, "number"],
 					[SECTION_LINE_REGEX, "type"],
-					[/\b(?:capture\s+(?:cookie|request\s+header|response\s+header))\b/, "keyword"],
-					[/\b(?:http-check\s+(?:disable-on-404|expect|send-state)|http-(?:request|response))\b/, "keyword"],
-					[/\b(?:option\s+(?:abortonclose|accept-invalid-http-request|accept-invalid-http-response|allbackups|checkcache|clitcpka|contstats|dontlog-normal|dontlognull|forceclose|forwardfor|http-no-delay|http-pretend-keepalive|http-server-close|http-use-proxy-header|httpchk|httpclose|httplog|http_proxy|independent-streams|ldap-check|log-health-checks|log-separate-errors|logasap|mysql-check|pgsql-check|nolinger|originalto|persist|redispatch|redis-check|smtpchk|socket-stats|splice-auto|splice-request|splice-response|srvtcpka|ssl-hello-chk|tcp-check|tcp-smart-accept|tcp-smart-connect|tcpka|tcplog|transparent))\b/, "keyword"],
-					[/\b(?:stats\s+(?:admin|auth|bind-process|enable|hide-version|http-request|realm|refresh|scope|show-desc|show-legends|show-node|socket|timeout|uri))\b/, "keyword"],
-					[/\b(?:stick\s+(?:match|on|store-request|store-response)|stick-table)\b/, "keyword"],
-					[/\b(?:tcp-request\s+(?:connection|content|inspect-delay)|tcp-response\s+(?:content|inspect-delay))\b/, "keyword"],
-					[/\b(?:timeout\s+(?:check|client|connect|http-keep-alive|http-request|queue|server|tarpit|tunnel))\b/, "keyword"],
-					[/\b(?:add-(?:header|acl|map|var)|del-(?:acl|header|map|var)|set-(?:header|nice|log-level|path|query|uri|tos|mark|priority-classs|priority-offset|var)|replace-(?:header|value))\b/, "predefined"],
+					[
+						/\b(?:capture\s+(?:cookie|request\s+header|response\s+header))\b/,
+						"keyword",
+					],
+					[
+						/\b(?:http-check\s+(?:disable-on-404|expect|send-state)|http-(?:request|response))\b/,
+						"keyword",
+					],
+					[
+						/\b(?:option\s+(?:abortonclose|accept-invalid-http-request|accept-invalid-http-response|allbackups|checkcache|clitcpka|contstats|dontlog-normal|dontlognull|forceclose|forwardfor|http-no-delay|http-pretend-keepalive|http-server-close|http-use-proxy-header|httpchk|httpclose|httplog|http_proxy|independent-streams|ldap-check|log-health-checks|log-separate-errors|logasap|mysql-check|pgsql-check|nolinger|originalto|persist|redispatch|redis-check|smtpchk|socket-stats|splice-auto|splice-request|splice-response|srvtcpka|ssl-hello-chk|tcp-check|tcp-smart-accept|tcp-smart-connect|tcpka|tcplog|transparent))\b/,
+						"keyword",
+					],
+					[
+						/\b(?:stats\s+(?:admin|auth|bind-process|enable|hide-version|http-request|realm|refresh|scope|show-desc|show-legends|show-node|socket|timeout|uri))\b/,
+						"keyword",
+					],
+					[
+						/\b(?:stick\s+(?:match|on|store-request|store-response)|stick-table)\b/,
+						"keyword",
+					],
+					[
+						/\b(?:tcp-request\s+(?:connection|content|inspect-delay)|tcp-response\s+(?:content|inspect-delay))\b/,
+						"keyword",
+					],
+					[
+						/\b(?:timeout\s+(?:check|client|connect|http-keep-alive|http-request|queue|server|tarpit|tunnel))\b/,
+						"keyword",
+					],
+					[
+						/\b(?:add-(?:header|acl|map|var)|del-(?:acl|header|map|var)|set-(?:header|nice|log-level|path|query|uri|tos|mark|priority-classs|priority-offset|var)|replace-(?:header|value))\b/,
+						"predefined",
+					],
 					[/\b(?:status|rstatus|rstring|string)\s+.+$/, "string"],
 					[/\b(?:if|unless|rewrite)\b/, "keyword"],
 					[/\s+(?:or|\|\||!)\s+/, "operator"],
@@ -250,14 +277,17 @@ export function registerHaproxyLanguage(monaco: typeof monacoEditor) {
 					[/\/[-\w.?=]+/, "variable"],
 					[/"(?:\\.|[^"])*"/, "string"],
 					[/^\s*(?:maxconn|user|group)\b/, "keyword"],
-					[/\b[\w-]+\b/, {
-						cases: {
-							"@stickParams": "constant",
-							"@keywords": "keyword",
-							"@subKeywords": "predefined",
-							"@default": "identifier",
+					[
+						/\b[\w-]+\b/,
+						{
+							cases: {
+								"@stickParams": "constant",
+								"@keywords": "keyword",
+								"@subKeywords": "predefined",
+								"@default": "identifier",
+							},
 						},
-					}],
+					],
 				],
 			},
 		});

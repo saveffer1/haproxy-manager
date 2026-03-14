@@ -1,8 +1,13 @@
-import { BarChart3, FileCode2, LayoutDashboard, X } from "lucide-react";
+import { BarChart3, FileCode2, LayoutDashboard, User, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type DashboardTab = "overview" | "stats" | "config";
+export type DashboardTab =
+	| "overview"
+	| "stats"
+	| "config"
+	| "node-config"
+	| "account";
 
 type SidebarProps = {
 	mobileOpen: boolean;
@@ -14,7 +19,12 @@ type SidebarProps = {
 const navItems = [
 	{ label: "Overview", icon: LayoutDashboard, tab: "overview" as const },
 	{ label: "HAProxy Stats", icon: BarChart3, tab: "stats" as const },
-	{ label: "Config Editor", icon: FileCode2, tab: "config" as const },
+	{ label: "HAProxy Config", icon: FileCode2, tab: "config" as const },
+	{
+		label: "Node Configuration",
+		icon: FileCode2,
+		tab: "node-config" as const,
+	},
 ];
 
 export function Sidebar({
@@ -45,9 +55,9 @@ export function Sidebar({
 						<p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
 							HAProxy Manager
 						</p>
-						<p className="text-sm font-semibold text-foreground">
+						{/* <p className="text-sm font-semibold text-foreground">
 							Operations Console
-						</p>
+						</p> */}
 					</div>
 					<Button
 						variant="ghost"
@@ -87,6 +97,25 @@ export function Sidebar({
 						))}
 					</ul>
 				</nav>
+
+				<div className="border-t border-border p-3">
+					<button
+						type="button"
+						onClick={() => {
+							onSelectTab("account");
+							onClose();
+						}}
+						className={cn(
+							"flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+							activeTab === "account"
+								? "bg-primary/10 text-primary"
+								: "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+						)}
+					>
+						<User className="h-4 w-4" />
+						User Account
+					</button>
+				</div>
 			</aside>
 		</>
 	);

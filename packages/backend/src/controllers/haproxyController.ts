@@ -1,10 +1,14 @@
+import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
+import { db } from "../database/db";
+import { nodes } from "../database/schema";
 import { auth } from "../lib/auth";
 import { env } from "../lib/env";
 import {
 	type HAProxyBackend,
 	type HAProxyConfig,
 	type HAProxyConfigFile,
+	type HAProxyNodeRuntimeConfig,
 	type HAProxyStats,
 	haproxyService,
 } from "../services/haproxyService";
@@ -37,12 +41,100 @@ table.tbl td, table.tbl th { border-color: #334155 !important; }
 `;
 }
 
+async function resolveNodeConfig(nodeId: string | null) {
+	if (!nodeId) {
+		return {
+			valid: true as const,
+			node: null as HAProxyNodeRuntimeConfig | null,
+		};
+	}
+
+	const node = await db.query.nodes.findFirst({
+		where: eq(nodes.id, nodeId),
+	});
+
+	if (!node) {
+		return {
+			valid: false as const,
+			status: 404,
+			error: "Selected node was not found",
+		};
+	}
+
+	return { valid: true as const, node: node as HAProxyNodeRuntimeConfig };
+}
+
+function requireManagedNode(node: HAProxyNodeRuntimeConfig | null) {
+	if (node && node.type !== "managed") {
+		return {
+			valid: false as const,
+			status: 400,
+			error:
+				"Selected node is monitored-only. HAProxy actions require a managed node.",
+		};
+	}
+
+	return { valid: true as const };
+}
+
 export function createHAProxyController() {
 	return (
 		new Elysia({ prefix: "/haproxy" })
+			.onBeforeHandle(async ({ request, set }) => {
+				const requestPath = new URL(request.url).pathname;
+				const requiresManagedNode = ![
+					"/haproxy/stats",
+					"/haproxy/stats/ui",
+				].includes(requestPath);
+
+				if (!requiresManagedNode) {
+					return;
+				}
+
+				const nodeId = new URL(request.url).searchParams.get("nodeId");
+				const resolved = await resolveNodeConfig(nodeId);
+
+				if (!resolved.valid) {
+					set.status = resolved.status;
+					return {
+						success: false,
+						error: resolved.error,
+					};
+				}
+
+				const validation = requireManagedNode(resolved.node);
+
+				if (!validation.valid) {
+					set.status = validation.status;
+					return {
+						success: false,
+						error: validation.error,
+					};
+				}
+			})
 			.get("/stats/ui", async ({ request, set }) => {
 				try {
-					const themeParam = new URL(request.url).searchParams.get("theme");
+					const requestUrl = new URL(request.url);
+					const themeParam = requestUrl.searchParams.get("theme");
+					const nodeId = requestUrl.searchParams.get("nodeId");
+					const resolved = await resolveNodeConfig(nodeId);
+					if (!resolved.valid) {
+						set.status = resolved.status;
+						return {
+							success: false,
+							error: resolved.error,
+						};
+					}
+
+					if (resolved.node && !resolved.node.haproxyStatsUrl?.trim()) {
+						set.status = 400;
+						return {
+							success: false,
+							error:
+								"Selected node has no HAProxy stats URL configured. Please set it in Node Configuration.",
+						};
+					}
+
 					const theme: ThemeMode = themeParam === "dark" ? "dark" : "light";
 
 					const authApi = auth.api as {
@@ -65,7 +157,20 @@ export function createHAProxyController() {
 					const basicAuth = Buffer.from(
 						`${env.HAPROXY_STATS_USERNAME}:${env.HAPROXY_STATS_PASSWORD}`,
 					).toString("base64");
-					const upstream = await fetch(env.HAPROXY_STATS_URL, {
+
+					const upstreamUrl = (() => {
+						if (!resolved.node) {
+							return env.HAPROXY_STATS_URL;
+						}
+
+						const configured = resolved.node.haproxyStatsUrl?.trim() || "";
+						const url = new URL(
+							configured.includes("://") ? configured : `http://${configured}`,
+						);
+						return url.toString();
+					})();
+
+					const upstream = await fetch(upstreamUrl, {
 						headers: {
 							Authorization: `Basic ${basicAuth}`,
 						},
@@ -104,23 +209,38 @@ export function createHAProxyController() {
 				}
 			})
 			// Get HAProxy stats - connects to socket and fetches real-time stats
-			.get("/stats", async (): Promise<ApiResponse<HAProxyStats>> => {
-				try {
-					const stats = await haproxyService.getStats();
-					return {
-						success: true,
-						data: stats,
-					};
-				} catch (error) {
-					return {
-						success: false,
-						error:
-							error instanceof Error
-								? error.message
-								: "Failed to fetch HAProxy stats",
-					};
-				}
-			})
+			.get(
+				"/stats",
+				async ({ request, set }): Promise<ApiResponse<HAProxyStats>> => {
+					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
+						const stats = await haproxyService.getStats(
+							resolved.node ?? undefined,
+						);
+						return {
+							success: true,
+							data: stats,
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to fetch HAProxy stats",
+						};
+					}
+				},
+			)
 			// Get HAProxy configuration
 			.get("/config", async (): Promise<ApiResponse<HAProxyConfig>> => {
 				try {
@@ -141,9 +261,28 @@ export function createHAProxyController() {
 			})
 			.get(
 				"/config-files",
-				async (): Promise<ApiResponse<HAProxyConfigFile[]>> => {
+				async ({
+					request,
+					query,
+					set,
+				}): Promise<ApiResponse<HAProxyConfigFile[]>> => {
 					try {
-						const files = await haproxyService.listConfigFiles();
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
+						const files = await haproxyService.listConfigFiles(
+							resolved.node ?? undefined,
+							{
+								forceRefresh: query.forceRefresh === "true",
+							},
+						);
 						return {
 							success: true,
 							data: files,
@@ -162,11 +301,21 @@ export function createHAProxyController() {
 			.get(
 				"/config-files/content",
 				async ({
+					request,
 					query,
-				}: {
-					query: { path?: string };
+					set,
 				}): Promise<ApiResponse<{ path: string; content: string }>> => {
 					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
 						if (!query.path) {
 							return {
 								success: false,
@@ -174,7 +323,13 @@ export function createHAProxyController() {
 							};
 						}
 
-						const content = await haproxyService.getConfigFileContent(query.path);
+						const content = await haproxyService.getConfigFileContent(
+							query.path,
+							resolved.node ?? undefined,
+							{
+								forceRefresh: query.forceRefresh === "true",
+							},
+						);
 						return {
 							success: true,
 							data: {
@@ -195,8 +350,22 @@ export function createHAProxyController() {
 			)
 			.post(
 				"/config-files",
-				async ({ body }): Promise<ApiResponse<{ path: string }>> => {
+				async ({
+					body,
+					request,
+					set,
+				}): Promise<ApiResponse<{ path: string }>> => {
 					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
 						const payload = body as {
 							path?: string;
 							content?: string;
@@ -214,10 +383,11 @@ export function createHAProxyController() {
 						await haproxyService.createConfigFile(
 							targetPath,
 							payload.content ?? "",
+							resolved.node ?? undefined,
 						);
 
 						if (payload.reload ?? true) {
-							await haproxyService.reloadConfig();
+							await haproxyService.reloadConfig(resolved.node ?? undefined);
 						}
 
 						return {
@@ -238,8 +408,22 @@ export function createHAProxyController() {
 			)
 			.put(
 				"/config-files/content",
-				async ({ body }): Promise<ApiResponse<{ path: string }>> => {
+				async ({
+					body,
+					request,
+					set,
+				}): Promise<ApiResponse<{ path: string }>> => {
 					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
 						const payload = body as {
 							path?: string;
 							content?: string;
@@ -257,10 +441,11 @@ export function createHAProxyController() {
 						await haproxyService.saveConfigFile(
 							targetPath,
 							payload.content ?? "",
+							resolved.node ?? undefined,
 						);
 
 						if (payload.reload ?? true) {
-							await haproxyService.reloadConfig();
+							await haproxyService.reloadConfig(resolved.node ?? undefined);
 						}
 
 						return {
@@ -281,8 +466,23 @@ export function createHAProxyController() {
 			)
 			.delete(
 				"/config-files",
-				async ({ query, body }): Promise<ApiResponse<{ path: string }>> => {
+				async ({
+					query,
+					body,
+					request,
+					set,
+				}): Promise<ApiResponse<{ path: string }>> => {
 					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
 						const payload = (body ?? {}) as {
 							path?: string;
 							reload?: boolean;
@@ -296,7 +496,10 @@ export function createHAProxyController() {
 							};
 						}
 
-						await haproxyService.deleteConfigFile(targetPath);
+						await haproxyService.deleteConfigFile(
+							targetPath,
+							resolved.node ?? undefined,
+						);
 
 						const shouldReload =
 							typeof payload.reload === "boolean"
@@ -306,7 +509,7 @@ export function createHAProxyController() {
 									: true;
 
 						if (shouldReload) {
-							await haproxyService.reloadConfig();
+							await haproxyService.reloadConfig(resolved.node ?? undefined);
 						}
 
 						return {
@@ -326,23 +529,38 @@ export function createHAProxyController() {
 				},
 			)
 			// Get all backends with their servers - fetches via socket
-			.get("/backends", async (): Promise<ApiResponse<HAProxyBackend[]>> => {
-				try {
-					const backends = await haproxyService.getBackends();
-					return {
-						success: true,
-						data: backends,
-					};
-				} catch (error) {
-					return {
-						success: false,
-						error:
-							error instanceof Error
-								? error.message
-								: "Failed to fetch HAProxy backends",
-					};
-				}
-			})
+			.get(
+				"/backends",
+				async ({ request, set }): Promise<ApiResponse<HAProxyBackend[]>> => {
+					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
+						const backends = await haproxyService.getBackends(
+							resolved.node ?? undefined,
+						);
+						return {
+							success: true,
+							data: backends,
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to fetch HAProxy backends",
+						};
+					}
+				},
+			)
 			// Set server state (enable/disable)
 			.post(
 				"/server/:backend/:server/:state",
@@ -389,9 +607,19 @@ export function createHAProxyController() {
 				},
 			)
 			// Reload HAProxy config
-			.post("/reload", async (): Promise<ApiResponse> => {
+			.post("/reload", async ({ request, set }): Promise<ApiResponse> => {
 				try {
-					await haproxyService.reloadConfig();
+					const nodeId = new URL(request.url).searchParams.get("nodeId");
+					const resolved = await resolveNodeConfig(nodeId);
+					if (!resolved.valid) {
+						set.status = resolved.status;
+						return {
+							success: false,
+							error: resolved.error,
+						};
+					}
+
+					await haproxyService.reloadConfig(resolved.node ?? undefined);
 					return {
 						success: true,
 						message: "HAProxy configuration reloaded",

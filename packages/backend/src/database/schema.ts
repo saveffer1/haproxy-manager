@@ -1,11 +1,28 @@
 // src/database/schema.ts
-import { boolean, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+	boolean,
+	integer,
+	pgEnum,
+	pgTable,
+	text,
+	timestamp,
+} from "drizzle-orm/pg-core";
 
 export const nodeTypeEnum = pgEnum("node_type", ["managed", "monitored"]);
+export const nodeSourceEnum = pgEnum("node_source", [
+	"manual",
+	"docker",
+	"remote",
+	"api",
+]);
 export const logStrategyEnum = pgEnum("log_strategy", [
 	"docker",
 	"file",
 	"journald",
+]);
+export const haproxyLogSourceEnum = pgEnum("haproxy_log_source", [
+	"container",
+	"forwarded",
 ]);
 
 export const nodes = pgTable("nodes", {
@@ -15,9 +32,20 @@ export const nodes = pgTable("nodes", {
 	name: text("name").notNull(),
 	ipAddress: text("ip_address").notNull(),
 	type: nodeTypeEnum("type").default("monitored").notNull(),
+	source: nodeSourceEnum("source").default("manual").notNull(),
 	logStrategy: logStrategyEnum("log_strategy").default("docker").notNull(),
 	logPath: text("log_path"),
+	haproxyStatsUrl: text("haproxy_stats_url"),
+	haproxyApiUrl: text("haproxy_api_url"),
+	haproxyContainerRef: text("haproxy_container_ref"),
+	haproxyConfigPath: text("haproxy_config_path"),
+	haproxyLogPath: text("haproxy_log_path"),
+	haproxyLogSource: haproxyLogSourceEnum("haproxy_log_source")
+		.default("container")
+		.notNull(),
+	isLocalService: boolean("is_local_service").default(false).notNull(),
 	sshUser: text("ssh_user").default("root"),
+	sshPort: integer("ssh_port").default(22).notNull(),
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

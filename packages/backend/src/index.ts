@@ -12,6 +12,8 @@ import { createNodeController } from "./controllers/nodeController";
 import { apiKeySupportPlugin } from "./lib/apiKeySupport";
 import { auth, ensureDefaultAdminUser } from "./lib/auth";
 import { env } from "./lib/env";
+import { ensureDefaultNode } from "./services/nodeService";
+import { ensureSshKeyPair } from "./services/sshService";
 
 function getBearerToken(authorizationHeader: string | null) {
 	if (!authorizationHeader) {
@@ -108,5 +110,7 @@ const app = new Elysia()
 	.listen(3000);
 
 void ensureDefaultAdminUser();
+void ensureDefaultNode();
+void ensureSshKeyPair();
 
 export type App = typeof app;

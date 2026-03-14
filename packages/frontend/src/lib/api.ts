@@ -24,17 +24,91 @@ export type HAProxyStats = {
 	uptime: string;
 	active_sessions: number;
 	connections_rate: number;
+	warning?: string;
+	nodeRuntime?: {
+		nodeId: string;
+		nodeName: string;
+		nodeType: "managed" | "monitored";
+		source: "manual" | "docker" | "remote" | "api";
+		collectedAt: string;
+		detailItems: Array<{
+			label: string;
+			value: string;
+		}>;
+		docker?: {
+			containerId: string;
+			containerName: string;
+			image: string;
+			status: string;
+			startedAt?: string;
+			createdAt?: string;
+			networkMode?: string;
+			networks: Array<{
+				name: string;
+				ipAddress?: string;
+			}>;
+			uptime?: string;
+			note?: string;
+		};
+		note?: string;
+	};
 };
 
 export type NodeOutput = {
 	id: string;
 	name: string;
 	ipAddress: string;
+	isLocalService: boolean;
 	type: "managed" | "monitored";
+	source: "manual" | "docker" | "remote" | "api";
 	logStrategy: "docker" | "file" | "journald";
 	logPath?: string;
+	haproxyStatsUrl?: string | null;
+	haproxyApiUrl?: string | null;
+	haproxyContainerRef?: string | null;
+	haproxyConfigPath?: string | null;
+	haproxyLogPath?: string | null;
+	haproxyLogSource?: "container" | "forwarded";
 	sshUser: string;
+	sshPort: number;
 	createdAt: string;
+};
+
+export type NodeConfigUpdateInput = {
+	name: string;
+	ipAddress: string;
+	isLocalService: boolean;
+	type: "managed" | "monitored";
+	source: "manual" | "docker" | "remote" | "api";
+	haproxyStatsUrl?: string;
+	haproxyApiUrl?: string;
+	haproxyContainerRef?: string;
+	haproxyConfigPath?: string;
+	haproxyLogPath?: string;
+	haproxyLogSource: "container" | "forwarded";
+	sshUser?: string;
+	sshPort?: number;
+};
+
+export type CreateNodeInput = {
+	name: string;
+	ipAddress: string;
+	isLocalService?: boolean;
+	type?: "managed" | "monitored";
+	source?: "manual" | "docker" | "remote" | "api";
+	haproxyStatsUrl?: string;
+	haproxyApiUrl?: string;
+	haproxyContainerRef?: string;
+	haproxyConfigPath?: string;
+	haproxyLogPath?: string;
+	haproxyLogSource?: "container" | "forwarded";
+	sshUser?: string;
+	sshPort?: number;
+};
+
+export type SshTestResult = {
+	ok: boolean;
+	message: string;
 };
 
 export type DashboardSummary = {
@@ -109,11 +183,36 @@ type ResetPasswordInput = {
 	newPassword: string;
 };
 
+type ChangePasswordInput = {
+	currentPassword: string;
+	newPassword: string;
+	revokeOtherSessions?: boolean;
+};
+
 type TreatyResponse = {
 	data: unknown;
 	error: unknown;
 	status: number;
 };
+
+function appendNodeId(path: string, nodeId?: string | null) {
+	if (!nodeId) {
+		return path;
+	}
+
+	const separator = path.includes("?") ? "&" : "?";
+	const query = new URLSearchParams({ nodeId }).toString();
+	return `${path}${separator}${query}`;
+}
+
+function requireNodeId(nodeId?: string | null) {
+	const normalized = nodeId?.trim();
+	if (!normalized) {
+		throw new Error("Please select a node first.");
+	}
+
+	return normalized;
+}
 
 function buildApiKeyHeaders() {
 	const configuredApiKey = env.VITE_API_KEY.trim();
@@ -384,6 +483,14 @@ export async function resetPassword(input: ResetPasswordInput) {
 	});
 }
 
+export async function changeBetterAuthPassword(input: ChangePasswordInput) {
+	await postJsonRaw("/api/auth/change-password", {
+		currentPassword: input.currentPassword,
+		newPassword: input.newPassword,
+		revokeOtherSessions: input.revokeOtherSessions ?? false,
+	});
+}
+
 export async function getBetterAuthDefaultIdentity(): Promise<BetterAuthDefaultIdentity> {
 	try {
 		const response = await requestTreaty<BetterAuthDefaultUserResponse>(
@@ -405,10 +512,23 @@ export async function getBetterAuthDefaultIdentity(): Promise<BetterAuthDefaultI
 	}
 }
 
-export async function getDashboardSummary(): Promise<DashboardSummary> {
+export async function getDashboardSummary(
+	nodeId?: string | null,
+	options?: {
+		includeStats?: boolean;
+	},
+): Promise<DashboardSummary> {
+	const includeStats = options?.includeStats ?? false;
+	const scopedNodeId = nodeId?.trim() || null;
+	const shouldFetchStats = includeStats && Boolean(scopedNodeId);
+
 	const [healthResult, statsResult, nodesResult] = await Promise.allSettled([
 		requestTreaty<ApiEnvelope<HealthStatus>>(api.health.get()),
-		requestTreaty<ApiEnvelope<HAProxyStats>>(api.haproxy.stats.get()),
+		shouldFetchStats
+			? getJsonRaw<ApiEnvelope<HAProxyStats>>(
+					appendNodeId("/haproxy/stats", scopedNodeId),
+				)
+			: Promise.resolve({ success: true, data: null } as ApiEnvelope<null>),
 		requestTreaty<ApiEnvelope<NodeOutput[]>>(api.api.nodes.get()),
 	]);
 
@@ -418,7 +538,9 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 			: null;
 
 	const stats =
-		statsResult.status === "fulfilled" && statsResult.value.success
+		shouldFetchStats &&
+		statsResult.status === "fulfilled" &&
+		statsResult.value.success
 			? (statsResult.value.data ?? null)
 			: null;
 
@@ -427,7 +549,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 			? (nodesResult.value.data ?? [])
 			: [];
 
-	const hasError = !health || !stats;
+	const hasError = !health || (shouldFetchStats && !stats);
 
 	return {
 		health,
@@ -439,16 +561,34 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 	};
 }
 
-export async function getHAProxyStatsDashboardHtml(theme: ThemeMode) {
+export async function getHAProxyStatsDashboardHtml(
+	theme: ThemeMode,
+	nodeId: string,
+) {
+	const scopedNodeId = requireNodeId(nodeId);
 	const query = new URLSearchParams({ theme });
+	query.set("nodeId", scopedNodeId);
+
 	return apiFetchText(`/haproxy/stats/ui?${query.toString()}`, {
 		includeApiKey: false,
 	});
 }
 
-export async function listHAProxyConfigFiles(): Promise<HAProxyConfigFile[]> {
+export async function listHAProxyConfigFiles(
+	nodeId: string,
+	options?: {
+		forceRefresh?: boolean;
+	},
+): Promise<HAProxyConfigFile[]> {
+	const scopedNodeId = requireNodeId(nodeId);
+	const query = new URLSearchParams();
+	query.set("nodeId", scopedNodeId);
+	if (options?.forceRefresh) {
+		query.set("forceRefresh", "true");
+	}
+
 	const response = await getJsonRaw<ApiEnvelope<HAProxyConfigFile[]>>(
-		"/haproxy/config-files",
+		`/haproxy/config-files${query.toString() ? `?${query.toString()}` : ""}`,
 	);
 
 	if (!response.success) {
@@ -458,11 +598,22 @@ export async function listHAProxyConfigFiles(): Promise<HAProxyConfigFile[]> {
 	return response.data ?? [];
 }
 
-export async function getHAProxyConfigFileContent(filePath: string): Promise<string> {
+export async function getHAProxyConfigFileContent(
+	filePath: string,
+	nodeId: string,
+	options?: {
+		forceRefresh?: boolean;
+	},
+): Promise<string> {
+	const scopedNodeId = requireNodeId(nodeId);
 	const query = new URLSearchParams({ path: filePath });
-	const response = await getJsonRaw<ApiEnvelope<{ path: string; content: string }>>(
-		`/haproxy/config-files/content?${query.toString()}`,
-	);
+	query.set("nodeId", scopedNodeId);
+	if (options?.forceRefresh) {
+		query.set("forceRefresh", "true");
+	}
+	const response = await getJsonRaw<
+		ApiEnvelope<{ path: string; content: string }>
+	>(`/haproxy/config-files/content?${query.toString()}`);
 
 	if (!response.success || !response.data) {
 		throw new Error(response.error ?? "Failed to load HAProxy config file");
@@ -475,9 +626,11 @@ export async function createHAProxyConfigFile(
 	filePath: string,
 	content = "",
 	reload = true,
+	nodeId: string,
 ) {
+	const scopedNodeId = requireNodeId(nodeId);
 	const response = await postJsonRaw<ApiEnvelope<{ path: string }>>(
-		"/haproxy/config-files",
+		appendNodeId("/haproxy/config-files", scopedNodeId),
 		{
 			path: filePath,
 			content,
@@ -496,9 +649,11 @@ export async function saveHAProxyConfigFile(
 	filePath: string,
 	content: string,
 	reload = true,
+	nodeId: string,
 ) {
+	const scopedNodeId = requireNodeId(nodeId);
 	const response = await putJsonRaw<ApiEnvelope<{ path: string }>>(
-		"/haproxy/config-files/content",
+		appendNodeId("/haproxy/config-files/content", scopedNodeId),
 		{
 			path: filePath,
 			content,
@@ -513,11 +668,17 @@ export async function saveHAProxyConfigFile(
 	return response;
 }
 
-export async function deleteHAProxyConfigFile(filePath: string, reload = true) {
+export async function deleteHAProxyConfigFile(
+	filePath: string,
+	reload = true,
+	nodeId: string,
+) {
+	const scopedNodeId = requireNodeId(nodeId);
 	const query = new URLSearchParams({
 		path: filePath,
 		reload: String(reload),
 	});
+	query.set("nodeId", scopedNodeId);
 	const response = await deleteJsonRaw<ApiEnvelope<{ path: string }>>(
 		`/haproxy/config-files?${query.toString()}`,
 	);
@@ -529,13 +690,97 @@ export async function deleteHAProxyConfigFile(filePath: string, reload = true) {
 	return response;
 }
 
-export async function reloadHAProxyConfig() {
-	const response = await requestTreaty<ApiEnvelope<unknown>>(
-		api.haproxy.reload.post(),
+export async function reloadHAProxyConfig(nodeId: string) {
+	const scopedNodeId = requireNodeId(nodeId);
+	const response = await postJsonRaw<ApiEnvelope<unknown>>(
+		appendNodeId("/haproxy/reload", scopedNodeId),
+		{},
 	);
 	if (!response.success) {
 		throw new Error(response.error ?? "Failed to reload HAProxy configuration");
 	}
 
 	return response;
+}
+
+export async function updateNodeConfiguration(
+	nodeId: string,
+	input: NodeConfigUpdateInput,
+) {
+	const response = await putJsonRaw<ApiEnvelope<NodeOutput>>(
+		`/api/nodes/${nodeId}`,
+		{
+			name: input.name,
+			ipAddress: input.ipAddress,
+			isLocalService: input.isLocalService,
+			type: input.type,
+			source: input.source,
+			haproxyStatsUrl: input.haproxyStatsUrl,
+			haproxyApiUrl: input.haproxyApiUrl,
+			haproxyContainerRef: input.haproxyContainerRef,
+			haproxyConfigPath: input.haproxyConfigPath,
+			haproxyLogPath: input.haproxyLogPath,
+			haproxyLogSource: input.haproxyLogSource,
+			sshUser: input.sshUser,
+			sshPort: input.sshPort,
+		},
+	);
+
+	if (!response.success || !response.data) {
+		throw new Error(response.error ?? "Failed to update node configuration");
+	}
+
+	return response.data;
+}
+
+export async function createNode(input: CreateNodeInput) {
+	const response = await postJsonRaw<ApiEnvelope<NodeOutput>>(
+		"/api/nodes",
+		input,
+	);
+
+	if (!response.success || !response.data) {
+		throw new Error(response.error ?? "Failed to create node");
+	}
+
+	return response.data;
+}
+
+export async function deleteNode(nodeId: string) {
+	const response = await deleteJsonRaw<ApiEnvelope<unknown>>(
+		`/api/nodes/${nodeId}`,
+	);
+
+	if (!response.success) {
+		throw new Error(response.error ?? "Failed to delete node");
+	}
+}
+
+export async function getSshPublicKey(): Promise<string> {
+	const response = await getJsonRaw<ApiEnvelope<{ publicKey: string }>>(
+		"/api/nodes/ssh/public-key",
+	);
+
+	if (!response.success || !response.data?.publicKey) {
+		throw new Error(response.error ?? "Failed to load SSH public key");
+	}
+
+	return response.data.publicKey;
+}
+
+export async function testSshConnection(input: {
+	ipAddress: string;
+	sshUser?: string;
+	sshPort?: number;
+}): Promise<SshTestResult> {
+	const response = await postJsonRaw<ApiEnvelope<SshTestResult>>(
+		"/api/nodes/ssh/test",
+		input,
+	);
+
+	if (!response.success || !response.data) {
+		throw new Error(response.error ?? "Failed to test SSH connection");
+	}
+
+	return response.data;
 }

@@ -1,6 +1,6 @@
 import { KeyRound } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
@@ -112,15 +112,6 @@ export default function LoginPage() {
 									required
 								/>
 							</div>
-						</div>
-
-						<div className="flex items-center justify-between text-sm">
-							<Link
-								to="/forgot-password"
-								className="text-primary hover:text-primary/80"
-							>
-								Forgot password?
-							</Link>
 						</div>
 
 						{error && (

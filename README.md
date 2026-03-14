@@ -73,7 +73,17 @@ The setup script will:
    bun --filter @app/backend run db:push
    ```
 
-5. **Start development servers**
+5. **Default node is auto-registered on backend startup**
+  - The backend seeds one default node if no node exists with the same name or IP.
+  - Configure it with environment variables:
+    - `DEFAULT_NODE_NAME` (default: `local-haproxy-node`)
+    - `DEFAULT_NODE_IP_ADDRESS` (default: `127.0.0.1`)
+    - `DEFAULT_NODE_TYPE` (`managed` or `monitored`, default: `managed`)
+    - `DEFAULT_NODE_LOG_STRATEGY` (`docker`, `file`, `journald`, default: `docker`)
+    - `DEFAULT_NODE_LOG_PATH` (optional, default: empty)
+    - `DEFAULT_NODE_SSH_USER` (default: `root`)
+
+6. **Start development servers**
    
    In one terminal:
    ```bash

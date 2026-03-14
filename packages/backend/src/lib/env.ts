@@ -6,6 +6,13 @@ export const env = cleanEnv(process.env, {
 		choices: ["development", "test", "production", "staging"],
 	}),
 	API_KEY: str({ default: "your-default-api-key" }),
+	DEFAULT_NODE_NAME: str({ default: "local-haproxy-node" }),
+	DEFAULT_NODE_IP_ADDRESS: str({ default: "127.0.0.1" }),
+	DEFAULT_NODE_TYPE: str({ default: "managed" }),
+	DEFAULT_NODE_LOG_STRATEGY: str({ default: "docker" }),
+	DEFAULT_NODE_LOG_PATH: str({ default: "" }),
+	DEFAULT_NODE_SSH_USER: str({ default: "root" }),
+	DEFAULT_NODE_SSH_PORT: str({ default: "22" }),
 	HAPROXY_STATS_URL: str({ default: "http://localhost:8404/stats" }),
 	HAPROXY_STATS_USERNAME: str({ default: "admin" }),
 	HAPROXY_STATS_PASSWORD: str({ default: "admin12345" }),
@@ -26,12 +33,18 @@ export const env = cleanEnv(process.env, {
 	HAPROXY_SOCKET_PATH: str({ default: "/var/run/haproxy.sock" }),
 	HAPROXY_CONFIG_DIR: str({ default: "./haproxy/conf.d" }),
 	HAPROXY_RELOAD_COMMAND: str({
-		default: process.platform === "win32"
-			? "docker compose restart haproxy"
-			: "docker compose restart haproxy",
+		default:
+			process.platform === "win32"
+				? "docker compose restart haproxy"
+				: "docker compose restart haproxy",
 	}),
 	HAPROXY_VALIDATE_COMMAND: str({
 		default:
 			"docker compose exec -T haproxy haproxy -f /usr/local/etc/haproxy/conf.d -c",
 	}),
+	SSH_KEY_DIR: str({ default: ".runtime/ssh" }),
+	SSH_PRIVATE_KEY_FILE: str({ default: "id_ed25519" }),
+	SSH_PUBLIC_KEY_FILE: str({ default: "id_ed25519.pub" }),
+	SSH_DEFAULT_PORT: str({ default: "22" }),
+	SSH_CONNECT_TIMEOUT_SEC: str({ default: "8" }),
 });
