@@ -1,4 +1,4 @@
-import { LogOut, Menu } from "lucide-react";
+import { Github, LogOut, Menu } from "lucide-react";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Button } from "@/components/ui/button";
 
@@ -20,14 +20,22 @@ export function Topbar({ onToggleSidebar, onLogout }: TopbarProps) {
 					<Menu className="h-5 w-5" />
 				</Button>
 				<div>
-					<p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">
-						Secure Workspace
-					</p>
 					<h1 className="text-lg font-semibold text-foreground">Dashboard</h1>
 				</div>
 			</div>
 			<div className="flex items-center gap-2">
 				<ThemeToggle />
+				<Button variant="outline" size="icon" asChild>
+					<a
+						href="https://github.com/saveffer1/haproxy-manager"
+						target="_blank"
+						rel="noreferrer"
+						aria-label="Open GitHub repository"
+						title="GitHub"
+					>
+						<Github className="h-4 w-4" />
+					</a>
+				</Button>
 				<Button variant="outline" size="sm" onClick={onLogout}>
 					<LogOut className="mr-1 h-4 w-4" />
 					Logout
