@@ -75,7 +75,10 @@ export default function UserAccount() {
 					<CardContent>
 						<form className="space-y-4" onSubmit={handleSubmit}>
 							<div className="space-y-1">
-								<label htmlFor="current-password" className="text-sm font-medium">
+								<label
+									htmlFor="current-password"
+									className="text-sm font-medium"
+								>
 									Current Password
 								</label>
 								<Input
@@ -101,7 +104,10 @@ export default function UserAccount() {
 							</div>
 
 							<div className="space-y-1">
-								<label htmlFor="confirm-password" className="text-sm font-medium">
+								<label
+									htmlFor="confirm-password"
+									className="text-sm font-medium"
+								>
 									Confirm New Password
 								</label>
 								<Input
@@ -131,10 +137,7 @@ export default function UserAccount() {
 								</p>
 							)}
 
-							<Button
-								type="submit"
-								disabled={loading || passwordMismatch}
-							>
+							<Button type="submit" disabled={loading || passwordMismatch}>
 								{loading ? "Saving..." : "Update Password"}
 							</Button>
 						</form>

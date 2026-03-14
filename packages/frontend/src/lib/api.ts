@@ -124,6 +124,23 @@ export type HAProxyConfigFile = {
 	updatedAt: string;
 };
 
+export type HAProxyLogSource = "container" | "file";
+
+export type HAProxyLogContainer = {
+	id: string;
+	name: string;
+	image: string;
+	status: string;
+};
+
+export type HAProxyLogReadResult = {
+	source: HAProxyLogSource;
+	target: string;
+	resolvedFilePath?: string;
+	lines: string[];
+	fetchedAt: string;
+};
+
 type ThemeMode = "light" | "dark";
 
 type BetterAuthDefaultUserResponse = {
@@ -701,6 +718,79 @@ export async function reloadHAProxyConfig(nodeId: string) {
 	}
 
 	return response;
+}
+
+export async function listHAProxyLogContainers(
+	nodeId: string,
+): Promise<HAProxyLogContainer[]> {
+	const scopedNodeId = requireNodeId(nodeId);
+	const response = await getJsonRaw<ApiEnvelope<HAProxyLogContainer[]>>(
+		appendNodeId("/haproxy/logs/containers", scopedNodeId),
+	);
+
+	if (!response.success) {
+		throw new Error(response.error ?? "Failed to list log containers");
+	}
+
+	return response.data ?? [];
+}
+
+export async function listHAProxyLogFiles(
+	nodeId: string,
+	path?: string,
+): Promise<string[]> {
+	const scopedNodeId = requireNodeId(nodeId);
+	const query = new URLSearchParams({ nodeId: scopedNodeId });
+
+	if (path?.trim()) {
+		query.set("path", path.trim());
+	}
+
+	const response = await getJsonRaw<ApiEnvelope<string[]>>(
+		`/haproxy/logs/files?${query.toString()}`,
+	);
+
+	if (!response.success) {
+		throw new Error(response.error ?? "Failed to list selectable log files");
+	}
+
+	return response.data ?? [];
+}
+
+export async function readHAProxyLogs(input: {
+	nodeId: string;
+	source: HAProxyLogSource;
+	filePath?: string;
+	containerRef?: string;
+	lines?: number;
+}): Promise<HAProxyLogReadResult> {
+	const scopedNodeId = requireNodeId(input.nodeId);
+	const query = new URLSearchParams({
+		nodeId: scopedNodeId,
+		source: input.source,
+	});
+
+	if (typeof input.lines === "number" && Number.isFinite(input.lines)) {
+		query.set("lines", String(Math.trunc(input.lines)));
+	}
+
+	if (input.filePath?.trim()) {
+		query.set("filePath", input.filePath.trim());
+	}
+
+	if (input.containerRef?.trim()) {
+		query.set("containerRef", input.containerRef.trim());
+	}
+
+	const response = await getJsonRaw<ApiEnvelope<HAProxyLogReadResult>>(
+		`/haproxy/logs?${query.toString()}`,
+	);
+
+	if (!response.success || !response.data) {
+		throw new Error(response.error ?? "Failed to read HAProxy logs");
+	}
+
+	return response.data;
 }
 
 export async function updateNodeConfiguration(

@@ -60,8 +60,7 @@ export class NodeService {
 					logPath: input.logPath || null,
 					haproxyStatsUrl: input.haproxyStatsUrl || null,
 					haproxyApiUrl: input.haproxyApiUrl || null,
-					haproxyContainerRef:
-						input.haproxyContainerRef?.trim() || null,
+					haproxyContainerRef: input.haproxyContainerRef?.trim() || null,
 					haproxyConfigPath: input.haproxyConfigPath || null,
 					haproxyLogPath: input.haproxyLogPath || null,
 					haproxyLogSource: input.haproxyLogSource || "container",
@@ -114,7 +113,9 @@ export class NodeService {
 			if (input.haproxyApiUrl !== undefined)
 				updates.haproxyApiUrl = normalizeOptional(input.haproxyApiUrl);
 			if (input.haproxyContainerRef !== undefined)
-				updates.haproxyContainerRef = normalizeOptional(input.haproxyContainerRef);
+				updates.haproxyContainerRef = normalizeOptional(
+					input.haproxyContainerRef,
+				);
 			if (input.haproxyConfigPath !== undefined)
 				updates.haproxyConfigPath = normalizeOptional(input.haproxyConfigPath);
 			if (input.haproxyLogPath !== undefined)

@@ -6,6 +6,7 @@ import { env } from "@/lib/env";
 type QuickActionsProps = {
 	onOpenStats: () => void;
 	onOpenConfigEditor: () => void;
+	onOpenLogs: () => void;
 };
 
 function resolveBackendOrigin(rawBackendUrl: string) {
@@ -28,6 +29,7 @@ function resolveBackendOrigin(rawBackendUrl: string) {
 export default function QuickActions({
 	onOpenStats,
 	onOpenConfigEditor,
+	onOpenLogs,
 }: QuickActionsProps) {
 	const backendOrigin = resolveBackendOrigin(env.VITE_BACKEND_URL);
 	const openApiDocsUrl = new URL("/openapi", backendOrigin).toString();
@@ -54,6 +56,14 @@ export default function QuickActions({
 				>
 					<TerminalSquare className="mr-2 h-4 w-4" />
 					Open Config Editor
+				</Button>
+				<Button
+					className="w-full justify-start"
+					variant="outline"
+					onClick={onOpenLogs}
+				>
+					<TerminalSquare className="mr-2 h-4 w-4" />
+					Open Log Viewer
 				</Button>
 				<Button
 					className="w-full justify-start"

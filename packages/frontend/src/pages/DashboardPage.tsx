@@ -27,6 +27,9 @@ const QuickActions = lazy(() => import("@/components/dashboard/quick-actions"));
 const HAProxyConfigEditor = lazy(
 	() => import("@/components/dashboard/haproxy-config-editor"),
 );
+const HAProxyLogViewer = lazy(
+	() => import("@/components/dashboard/haproxy-log-viewer"),
+);
 const NodeConfiguration = lazy(
 	() => import("@/components/dashboard/node-configuration"),
 );
@@ -56,6 +59,7 @@ export default function DashboardPage() {
 		if (
 			tab === "stats" ||
 			tab === "config" ||
+			tab === "logs" ||
 			tab === "node-config" ||
 			tab === "account"
 		) {
@@ -77,8 +81,9 @@ export default function DashboardPage() {
 	);
 
 	const selectedNodeId = searchParams.get("nodeId");
-	const [debouncedSelectedNodeId, setDebouncedSelectedNodeId] =
-		useState<string | null>(selectedNodeId);
+	const [debouncedSelectedNodeId, setDebouncedSelectedNodeId] = useState<
+		string | null
+	>(selectedNodeId);
 
 	const setSelectedNodeId = useCallback(
 		(nodeId: string) => {
@@ -274,7 +279,7 @@ export default function DashboardPage() {
 
 	const showMonitoredWarning =
 		selectedNode?.type === "monitored" &&
-		(activeTab === "stats" || activeTab === "config");
+		(activeTab === "stats" || activeTab === "config" || activeTab === "logs");
 
 	const selectedNodeUptime =
 		scopedStats?.uptime ?? selectedNodeRuntime?.docker?.uptime ?? "n/a";
@@ -288,9 +293,9 @@ export default function DashboardPage() {
 				? "bg-amber-500"
 				: haproxyStatus === "degraded" || haproxyStatus === "not-configured"
 					? "bg-amber-500"
-				: haproxyStatus === "offline"
-					? "bg-rose-500"
-					: "bg-slate-400";
+					: haproxyStatus === "offline"
+						? "bg-rose-500"
+						: "bg-slate-400";
 	const haproxyStatusLabel =
 		haproxyStatus === "online"
 			? "Online"
@@ -300,9 +305,9 @@ export default function DashboardPage() {
 					? "Degraded"
 					: haproxyStatus === "not-configured"
 						? "No Stats Config"
-				: haproxyStatus === "offline"
-					? "Offline"
-					: "Unknown";
+						: haproxyStatus === "offline"
+							? "Offline"
+							: "Unknown";
 
 	const handleNodeCreated = useCallback(
 		(createdNode: (typeof summary.nodes)[number]) => {
@@ -383,7 +388,9 @@ export default function DashboardPage() {
 										<select
 											id="node-select"
 											value={selectedNodeId ?? ""}
-											onChange={(event) => setSelectedNodeId(event.target.value)}
+											onChange={(event) =>
+												setSelectedNodeId(event.target.value)
+											}
 											className="h-11 w-full rounded-md border border-border bg-card px-3 text-sm text-foreground shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
 										>
 											{managedNodes.length > 0 && (
@@ -438,6 +445,7 @@ export default function DashboardPage() {
 									<QuickActions
 										onOpenStats={() => setActiveTab("stats")}
 										onOpenConfigEditor={() => setActiveTab("config")}
+										onOpenLogs={() => setActiveTab("logs")}
 									/>
 								</Suspense>
 							)}
@@ -503,137 +511,139 @@ export default function DashboardPage() {
 													</div>
 													<div className="rounded-md border border-border bg-background p-3">
 														<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-																Node Source
-															</p>
-															<p className="mt-1 font-medium text-foreground">
-																{selectedNode.source}
-															</p>
-														</div>
-														<div className="rounded-md border border-border bg-background p-3">
+															Node Source
+														</p>
+														<p className="mt-1 font-medium text-foreground">
+															{selectedNode.source}
+														</p>
+													</div>
+													<div className="rounded-md border border-border bg-background p-3">
 														<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
 															Uptime
 														</p>
 														<p className="mt-1 font-medium text-foreground">
-																{selectedNodeUptime}
-															</p>
-														</div>
-														<div className="rounded-md border border-border bg-background p-3">
-															<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-																Active Sessions
-															</p>
-															<p className="mt-1 font-medium text-foreground">
-																{scopedStats?.active_sessions ?? 0}
-															</p>
-														</div>
-														<div className="rounded-md border border-border bg-background p-3 sm:col-span-2">
-															<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-																Connections Rate
-															</p>
-															<p className="mt-1 font-medium text-foreground">
-																{scopedStats?.connections_rate ?? 0}/s
+															{selectedNodeUptime}
+														</p>
+													</div>
+													<div className="rounded-md border border-border bg-background p-3">
+														<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+															Active Sessions
+														</p>
+														<p className="mt-1 font-medium text-foreground">
+															{scopedStats?.active_sessions ?? 0}
+														</p>
+													</div>
+													<div className="rounded-md border border-border bg-background p-3 sm:col-span-2">
+														<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+															Connections Rate
+														</p>
+														<p className="mt-1 font-medium text-foreground">
+															{scopedStats?.connections_rate ?? 0}/s
 														</p>
 													</div>
 												</div>
 
-													{selectedNodeRuntime?.detailItems &&
-														selectedNodeRuntime.detailItems.length > 0 && (
-															<div className="space-y-2 rounded-md border border-border bg-background p-3">
-																<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-																	Node Runtime Details
-																</p>
-																<div className="grid gap-2 sm:grid-cols-2">
-																	{selectedNodeRuntime.detailItems.map((item) => (
-																		<div
-																			key={`${item.label}-${item.value}`}
-																			className="rounded-md border border-border/60 bg-card p-2"
-																		>
-																			<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-																				{item.label}
-																			</p>
-																			<p className="mt-1 break-all text-xs font-medium text-foreground">
-																				{item.value}
-																			</p>
-																		</div>
-																	))}
-																</div>
-																{selectedNodeRuntime.note && (
-																	<p className="text-xs text-muted-foreground">
-																		{selectedNodeRuntime.note}
-																	</p>
-																)}
-															</div>
-														)}
-
-													{selectedNodeRuntime?.docker && (
+												{selectedNodeRuntime?.detailItems &&
+													selectedNodeRuntime.detailItems.length > 0 && (
 														<div className="space-y-2 rounded-md border border-border bg-background p-3">
 															<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-																Docker Runtime
+																Node Runtime Details
 															</p>
 															<div className="grid gap-2 sm:grid-cols-2">
-																<div className="rounded-md border border-border/60 bg-card p-2">
-																	<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-																		Container ID
-																	</p>
-																	<p className="mt-1 break-all text-xs font-medium text-foreground">
-																		{selectedNodeRuntime.docker.containerId}
-																	</p>
-																</div>
-																<div className="rounded-md border border-border/60 bg-card p-2">
-																	<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-																		Container Name
-																	</p>
-																	<p className="mt-1 break-all text-xs font-medium text-foreground">
-																		{selectedNodeRuntime.docker.containerName}
-																	</p>
-																</div>
-																<div className="rounded-md border border-border/60 bg-card p-2">
-																	<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-																		Image
-																	</p>
-																	<p className="mt-1 break-all text-xs font-medium text-foreground">
-																		{selectedNodeRuntime.docker.image}
-																	</p>
-																</div>
-																<div className="rounded-md border border-border/60 bg-card p-2">
-																	<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-																		Container Status
-																	</p>
-																	<p className="mt-1 break-all text-xs font-medium text-foreground">
-																		{selectedNodeRuntime.docker.status}
-																	</p>
-																</div>
-																<div className="rounded-md border border-border/60 bg-card p-2">
-																	<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-																		Network Mode
-																	</p>
-																	<p className="mt-1 break-all text-xs font-medium text-foreground">
-																		{selectedNodeRuntime.docker.networkMode ?? "n/a"}
-																	</p>
-																</div>
-																<div className="rounded-md border border-border/60 bg-card p-2">
-																	<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
-																		Networks
-																	</p>
-																	<p className="mt-1 break-all text-xs font-medium text-foreground">
-																		{selectedNodeRuntime.docker.networks.length > 0
-																			? selectedNodeRuntime.docker.networks
+																{selectedNodeRuntime.detailItems.map((item) => (
+																	<div
+																		key={`${item.label}-${item.value}`}
+																		className="rounded-md border border-border/60 bg-card p-2"
+																	>
+																		<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+																			{item.label}
+																		</p>
+																		<p className="mt-1 break-all text-xs font-medium text-foreground">
+																			{item.value}
+																		</p>
+																	</div>
+																))}
+															</div>
+															{selectedNodeRuntime.note && (
+																<p className="text-xs text-muted-foreground">
+																	{selectedNodeRuntime.note}
+																</p>
+															)}
+														</div>
+													)}
+
+												{selectedNodeRuntime?.docker && (
+													<div className="space-y-2 rounded-md border border-border bg-background p-3">
+														<p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+															Docker Runtime
+														</p>
+														<div className="grid gap-2 sm:grid-cols-2">
+															<div className="rounded-md border border-border/60 bg-card p-2">
+																<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+																	Container ID
+																</p>
+																<p className="mt-1 break-all text-xs font-medium text-foreground">
+																	{selectedNodeRuntime.docker.containerId}
+																</p>
+															</div>
+															<div className="rounded-md border border-border/60 bg-card p-2">
+																<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+																	Container Name
+																</p>
+																<p className="mt-1 break-all text-xs font-medium text-foreground">
+																	{selectedNodeRuntime.docker.containerName}
+																</p>
+															</div>
+															<div className="rounded-md border border-border/60 bg-card p-2">
+																<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+																	Image
+																</p>
+																<p className="mt-1 break-all text-xs font-medium text-foreground">
+																	{selectedNodeRuntime.docker.image}
+																</p>
+															</div>
+															<div className="rounded-md border border-border/60 bg-card p-2">
+																<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+																	Container Status
+																</p>
+																<p className="mt-1 break-all text-xs font-medium text-foreground">
+																	{selectedNodeRuntime.docker.status}
+																</p>
+															</div>
+															<div className="rounded-md border border-border/60 bg-card p-2">
+																<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+																	Network Mode
+																</p>
+																<p className="mt-1 break-all text-xs font-medium text-foreground">
+																	{selectedNodeRuntime.docker.networkMode ??
+																		"n/a"}
+																</p>
+															</div>
+															<div className="rounded-md border border-border/60 bg-card p-2">
+																<p className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+																	Networks
+																</p>
+																<p className="mt-1 break-all text-xs font-medium text-foreground">
+																	{selectedNodeRuntime.docker.networks.length >
+																	0
+																		? selectedNodeRuntime.docker.networks
 																				.map((network) =>
 																					network.ipAddress
 																						? `${network.name} (${network.ipAddress})`
 																						: network.name,
 																				)
 																				.join(", ")
-																			: "n/a"}
-																	</p>
-																</div>
-															</div>
-															{selectedNodeRuntime.docker.note && (
-																<p className="text-xs text-muted-foreground">
-																	{selectedNodeRuntime.docker.note}
+																		: "n/a"}
 																</p>
-															)}
+															</div>
 														</div>
-													)}
+														{selectedNodeRuntime.docker.note && (
+															<p className="text-xs text-muted-foreground">
+																{selectedNodeRuntime.docker.note}
+															</p>
+														)}
+													</div>
+												)}
 											</div>
 										)}
 									</CardContent>
@@ -703,6 +713,35 @@ export default function DashboardPage() {
 									selectedNodeName={selectedNode?.name ?? null}
 									selectedNodeConfigPath={
 										selectedNode?.haproxyConfigPath ?? null
+									}
+								/>
+							</Suspense>
+						</section>
+					) : activeTab === "logs" ? (
+						<section className="space-y-4">
+							<div>
+								<h2 className="text-xl font-semibold text-foreground">
+									HAProxy Logs
+								</h2>
+								<p className="text-sm text-muted-foreground">
+									Read logs from a file path or Docker container with optional
+									realtime polling.
+								</p>
+								{showMonitoredWarning && (
+									<span className="mt-2 inline-flex rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/50 dark:text-amber-200">
+										Monitored node selected: log actions may be restricted.
+									</span>
+								)}
+							</div>
+
+							<Suspense fallback={<DashboardSkeleton />}>
+								<HAProxyLogViewer
+									selectedNodeId={selectedNodeId}
+									selectedNodeName={selectedNode?.name ?? null}
+									selectedNodeLogPath={selectedNode?.haproxyLogPath ?? null}
+									selectedNodeLogSource={selectedNode?.haproxyLogSource ?? null}
+									selectedNodeContainerRef={
+										selectedNode?.haproxyContainerRef ?? null
 									}
 								/>
 							</Suspense>

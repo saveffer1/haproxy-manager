@@ -264,9 +264,13 @@ export default function HAProxyConfigEditor({
 			setLoadingContent(true);
 			clearMessages();
 			try {
-				const content = await getHAProxyConfigFileContent(path, debouncedNodeId, {
-					forceRefresh: options?.forceRefresh,
-				});
+				const content = await getHAProxyConfigFileContent(
+					path,
+					debouncedNodeId,
+					{
+						forceRefresh: options?.forceRefresh,
+					},
+				);
 				if (requestSequence !== contentRequestSequenceRef.current) {
 					return;
 				}
@@ -450,7 +454,12 @@ export default function HAProxyConfigEditor({
 		} finally {
 			setReloading(false);
 		}
-	}, [canManageNodeConfig, clearMessages, debouncedNodeId, reloadBlockedReason]);
+	}, [
+		canManageNodeConfig,
+		clearMessages,
+		debouncedNodeId,
+		reloadBlockedReason,
+	]);
 
 	const handleRefreshFiles = useCallback(async () => {
 		if (!canManageNodeConfig) {
@@ -487,7 +496,9 @@ export default function HAProxyConfigEditor({
 							variant="outline"
 							onClick={handleManualReload}
 							disabled={
-								reloading || !canManageNodeConfig || Boolean(reloadBlockedReason)
+								reloading ||
+								!canManageNodeConfig ||
+								Boolean(reloadBlockedReason)
 							}
 						>
 							{reloading ? (

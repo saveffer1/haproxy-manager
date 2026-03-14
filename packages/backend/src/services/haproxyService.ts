@@ -91,6 +91,23 @@ export type HAProxyConfigFile = {
 	updatedAt: string;
 };
 
+export type HAProxyLogSource = "container" | "file";
+
+export type HAProxyLogContainer = {
+	id: string;
+	name: string;
+	image: string;
+	status: string;
+};
+
+export type HAProxyLogReadResult = {
+	source: HAProxyLogSource;
+	target: string;
+	resolvedFilePath?: string;
+	lines: string[];
+	fetchedAt: string;
+};
+
 export type HAProxyNodeRuntimeConfig = {
 	id: string;
 	name: string;
@@ -274,7 +291,9 @@ export class HAProxyService {
 			const rawMessage =
 				error instanceof Error ? error.message : "SSH command failed";
 			const details = stderr || rawMessage;
-			throw new Error(`SSH command failed for ${user}@${host}:${port}: ${details}`);
+			throw new Error(
+				`SSH command failed for ${user}@${host}:${port}: ${details}`,
+			);
 		}
 	}
 
@@ -388,7 +407,8 @@ export class HAProxyService {
 		const statsHost = this.parseStatsUrlHost(nodeConfig.haproxyStatsUrl);
 		const normalizedNodeName = nodeConfig.name.trim().toLowerCase();
 		const normalizedNodeIp = nodeConfig.ipAddress.trim().toLowerCase();
-		const configuredRef = nodeConfig.haproxyContainerRef?.trim().toLowerCase() || "";
+		const configuredRef =
+			nodeConfig.haproxyContainerRef?.trim().toLowerCase() || "";
 
 		const scored = rows.map((container) => {
 			const containerName = container.names.toLowerCase();
@@ -468,16 +488,20 @@ export class HAProxyService {
 			const stdout = this.shouldUseSshForConfig(nodeConfig)
 				? await this.executeSshCommand(nodeConfig, psCommand)
 				: (
-						await execFileAsync("docker", [
-							"ps",
-							"-a",
-							"--no-trunc",
-							"--format",
-							"{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}",
-						], {
-							timeout: 8000,
-							windowsHide: true,
-						})
+						await execFileAsync(
+							"docker",
+							[
+								"ps",
+								"-a",
+								"--no-trunc",
+								"--format",
+								"{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}",
+							],
+							{
+								timeout: 8000,
+								windowsHide: true,
+							},
+						)
 					).stdout;
 
 			const rows = this.parseDockerPsRows(stdout);
@@ -1099,8 +1123,7 @@ export class HAProxyService {
 			.map((line) => line.trim())
 			.filter(Boolean)
 			.map((line) => {
-				const [id = "", name = "", image = "", status = ""] =
-					line.split("\t");
+				const [id = "", name = "", image = "", status = ""] = line.split("\t");
 				return {
 					id: id.trim(),
 					name: name.trim(),
@@ -1119,6 +1142,531 @@ export class HAProxyService {
 					`${container.name} [${container.id.slice(0, 12)}] (${container.image})`,
 			)
 			.join(", ");
+	}
+
+	private async listLocalDockerContainers(): Promise<
+		DockerContainerListItem[]
+	> {
+		const { stdout } = await execFileAsync(
+			"docker",
+			[
+				"ps",
+				"--no-trunc",
+				"--format",
+				"{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
+			],
+			{
+				timeout: 8000,
+				windowsHide: true,
+			},
+		);
+
+		return stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.map((line) => {
+				const [id = "", name = "", image = "", status = ""] = line.split("\t");
+				return {
+					id: id.trim(),
+					name: name.trim(),
+					image: image.trim(),
+					status: status.trim(),
+				};
+			})
+			.filter((item) => Boolean(item.name));
+	}
+
+	private parseLineLimit(limit?: number) {
+		if (!Number.isFinite(limit)) {
+			return 200;
+		}
+
+		return Math.max(10, Math.min(2000, Math.trunc(limit ?? 200)));
+	}
+
+	private splitLogLines(content: string, limit: number) {
+		const trimmed = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		const lines = trimmed.split("\n");
+		if (lines.length > 0 && lines[lines.length - 1] === "") {
+			lines.pop();
+		}
+
+		if (lines.length <= limit) {
+			return lines;
+		}
+
+		return lines.slice(lines.length - limit);
+	}
+
+	private isAllowedLogFileName(fileName: string) {
+		return /\.log(?:\.\d+)?$/i.test(fileName);
+	}
+
+	private async readLastLinesFromLocalFile(
+		filePath: string,
+		lineLimit: number,
+	) {
+		const fs = await import("node:fs/promises");
+		const stat = await fs.stat(filePath);
+		const maxBytes = 512 * 1024;
+		const bytesToRead = Math.min(Math.max(stat.size, 0), maxBytes);
+
+		const handle = await fs.open(filePath, "r");
+		try {
+			const buffer = Buffer.alloc(bytesToRead);
+			const start = Math.max(0, stat.size - bytesToRead);
+			const { bytesRead } = await handle.read(buffer, 0, bytesToRead, start);
+			const raw = buffer.subarray(0, bytesRead).toString("utf8");
+			return this.splitLogLines(raw, lineLimit);
+		} finally {
+			await handle.close();
+		}
+	}
+
+	private normalizeLocalLogPath(rawPath: string) {
+		const trimmed = rawPath.trim();
+		if (!trimmed) {
+			throw new Error("Log file path is required");
+		}
+
+		const normalized = trimmed.replace(/\//g, path.sep);
+		if (path.isAbsolute(normalized)) {
+			return path.resolve(normalized);
+		}
+
+		return path.resolve(process.cwd(), normalized);
+	}
+
+	private normalizeRemoteLogPath(rawPath: string) {
+		const trimmed = rawPath.trim().replace(/\\/g, "/");
+		if (!trimmed) {
+			throw new Error("Log file path is required");
+		}
+
+		if (!trimmed.startsWith("/")) {
+			throw new Error(
+				"Remote log path must be an absolute Linux path, e.g. /var/log/haproxy.log",
+			);
+		}
+
+		return trimmed;
+	}
+
+	private async resolveLocalLogReadTarget(requestedPath: string) {
+		const fs = await import("node:fs/promises");
+		const normalizedPath = this.normalizeLocalLogPath(requestedPath);
+		const stat = await fs.stat(normalizedPath);
+
+		if (stat.isFile()) {
+			if (!this.isAllowedLogFileName(path.basename(normalizedPath))) {
+				throw new Error(
+					"Only .log and .log.<number> files are allowed for log reading.",
+				);
+			}
+
+			return normalizedPath;
+		}
+
+		if (!stat.isDirectory()) {
+			throw new Error("Log path must be a file or directory.");
+		}
+
+		const entries = await fs.readdir(normalizedPath, { withFileTypes: true });
+		const candidates = entries.filter(
+			(entry) => entry.isFile() && this.isAllowedLogFileName(entry.name),
+		);
+
+		if (candidates.length === 0) {
+			throw new Error(
+				"No allowed log files found in directory. Only .log and .log.<number> are supported.",
+			);
+		}
+
+		const withMtime = await Promise.all(
+			candidates.map(async (entry) => {
+				const absPath = path.join(normalizedPath, entry.name);
+				const candidateStat = await fs.stat(absPath);
+				return {
+					absPath,
+					mtimeMs: candidateStat.mtimeMs,
+				};
+			}),
+		);
+
+		withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+		const newest = withMtime[0];
+		if (!newest) {
+			throw new Error("Unable to resolve a log file from directory path.");
+		}
+
+		return newest.absPath;
+	}
+
+	private async listLocalLogFilesFromPath(requestedPath: string) {
+		const fs = await import("node:fs/promises");
+		const normalizedPath = this.normalizeLocalLogPath(requestedPath);
+		const stat = await fs.stat(normalizedPath);
+
+		if (stat.isFile()) {
+			if (!this.isAllowedLogFileName(path.basename(normalizedPath))) {
+				throw new Error(
+					"Only .log and .log.<number> files are allowed for log reading.",
+				);
+			}
+
+			return [normalizedPath];
+		}
+
+		if (!stat.isDirectory()) {
+			throw new Error("Log path must be a file or directory.");
+		}
+
+		const entries = await fs.readdir(normalizedPath, { withFileTypes: true });
+		const candidates = entries.filter(
+			(entry) => entry.isFile() && this.isAllowedLogFileName(entry.name),
+		);
+
+		const withMtime = await Promise.all(
+			candidates.map(async (entry) => {
+				const absPath = path.join(normalizedPath, entry.name);
+				const candidateStat = await fs.stat(absPath);
+				return {
+					absPath,
+					mtimeMs: candidateStat.mtimeMs,
+				};
+			}),
+		);
+
+		withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+		return withMtime.map((item) => item.absPath);
+	}
+
+	private async resolveRemoteLogReadTarget(
+		nodeConfig: HAProxyNodeRuntimeConfig,
+		requestedPath: string,
+	) {
+		const remotePath = this.normalizeRemoteLogPath(requestedPath);
+		const resolverScript = [
+			`target=${this.quoteForSh(remotePath)}`,
+			"is_allowed_log_file() {",
+			"  case \"$1\" in",
+			"    *.log|*.log.[0-9]*) return 0 ;;",
+			"    *) return 1 ;;",
+			"  esac",
+			"}",
+			"if [ -f \"$target\" ]; then",
+			"  if is_allowed_log_file \"$target\"; then",
+			"    printf '%s\\n' \"$target\"",
+			"    exit 0",
+			"  fi",
+			"  echo 'Only .log and .log.<number> files are allowed for log reading.' >&2",
+			"  exit 1",
+			"fi",
+			"if [ -d \"$target\" ]; then",
+			"  newest=''",
+			"  newest_mtime='-1'",
+			"  for candidate in \"$target\"/*.log \"$target\"/*.log.[0-9]*; do",
+			"    [ -f \"$candidate\" ] || continue",
+			"    is_allowed_log_file \"$candidate\" || continue",
+			"    mtime=$(stat -c %Y \"$candidate\" 2>/dev/null || stat -f %m \"$candidate\" 2>/dev/null || echo 0)",
+			"    if [ \"$mtime\" -ge \"$newest_mtime\" ]; then",
+			"      newest_mtime=\"$mtime\"",
+			"      newest=\"$candidate\"",
+			"    fi",
+			"  done",
+			"  if [ -n \"$newest\" ]; then",
+			"    printf '%s\\n' \"$newest\"",
+			"    exit 0",
+			"  fi",
+			"  echo 'No allowed log files found in directory. Only .log and .log.<number> are supported.' >&2",
+			"  exit 1",
+			"fi",
+			"echo 'Log path does not exist or is not readable on remote host.' >&2",
+			"exit 1",
+		].join("\n");
+
+		const resolved = await this.executeSshCommand(nodeConfig, resolverScript);
+		const firstLine = resolved
+			.split("\n")
+			.map((line) => line.trim())
+			.find(Boolean);
+
+		if (!firstLine) {
+			throw new Error("Unable to resolve remote log file path.");
+		}
+
+		return firstLine;
+	}
+
+	private async listRemoteLogFilesFromPath(
+		nodeConfig: HAProxyNodeRuntimeConfig,
+		requestedPath: string,
+	) {
+		const remotePath = this.normalizeRemoteLogPath(requestedPath);
+		const listScript = [
+			`target=${this.quoteForSh(remotePath)}`,
+			"is_allowed_log_file() {",
+			"  case \"$1\" in",
+			"    *.log|*.log.[0-9]*) return 0 ;;",
+			"    *) return 1 ;;",
+			"  esac",
+			"}",
+			"if [ -f \"$target\" ]; then",
+			"  if is_allowed_log_file \"$target\"; then",
+			"    printf '%s\\n' \"$target\"",
+			"    exit 0",
+			"  fi",
+			"  echo 'Only .log and .log.<number> files are allowed for log reading.' >&2",
+			"  exit 1",
+			"fi",
+			"if [ -d \"$target\" ]; then",
+			"  for candidate in \"$target\"/*.log \"$target\"/*.log.[0-9]*; do",
+			"    [ -f \"$candidate\" ] || continue",
+			"    is_allowed_log_file \"$candidate\" || continue",
+			"    mtime=$(stat -c %Y \"$candidate\" 2>/dev/null || stat -f %m \"$candidate\" 2>/dev/null || echo 0)",
+			"    printf '%s\\t%s\\n' \"$mtime\" \"$candidate\"",
+			"  done | sort -rn | cut -f2-",
+			"  exit 0",
+			"fi",
+			"echo 'Log path does not exist or is not readable on remote host.' >&2",
+			"exit 1",
+		].join("\n");
+
+		const stdout = await this.executeSshCommand(nodeConfig, listScript);
+		return stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean);
+	}
+
+	private resolvePreferredContainerRef(nodeConfig?: HAProxyNodeRuntimeConfig) {
+		return (
+			nodeConfig?.haproxyContainerRef?.trim() || nodeConfig?.name?.trim() || ""
+		);
+	}
+
+	private resolveLogContainer(
+		containers: DockerContainerListItem[],
+		requestedRef?: string,
+		nodeConfig?: HAProxyNodeRuntimeConfig,
+	) {
+		if (containers.length === 0) {
+			throw new Error("No running Docker containers found.");
+		}
+
+		const normalizedRef =
+			requestedRef?.trim().toLowerCase() ||
+			this.resolvePreferredContainerRef(nodeConfig).toLowerCase();
+
+		if (normalizedRef) {
+			const exact = containers.filter((container) => {
+				const name = container.name.toLowerCase();
+				const id = container.id.toLowerCase();
+				return name === normalizedRef || id === normalizedRef;
+			});
+
+			if (exact.length === 1 && exact[0]) {
+				return exact[0];
+			}
+
+			const partial = containers.filter((container) => {
+				const name = container.name.toLowerCase();
+				const id = container.id.toLowerCase();
+				return name.includes(normalizedRef) || id.startsWith(normalizedRef);
+			});
+
+			if (partial.length === 1 && partial[0]) {
+				return partial[0];
+			}
+
+			if (partial.length > 1) {
+				throw new Error(
+					`Container reference '${requestedRef ?? normalizedRef}' matched multiple containers. Please choose a specific container.`,
+				);
+			}
+		}
+
+		const haproxyMatches = containers.filter((container) => {
+			const name = container.name.toLowerCase();
+			const image = container.image.toLowerCase();
+			return name.includes("haproxy") || image.includes("haproxy");
+		});
+
+		if (haproxyMatches.length === 1 && haproxyMatches[0]) {
+			return haproxyMatches[0];
+		}
+
+		if (containers.length === 1 && containers[0]) {
+			return containers[0];
+		}
+
+		throw new Error(
+			"Multiple running containers found. Select a container from the list before reading container logs.",
+		);
+	}
+
+	async listLogContainers(
+		nodeConfig?: HAProxyNodeRuntimeConfig,
+	): Promise<HAProxyLogContainer[]> {
+		try {
+			const rawContainers = nodeConfig
+				? this.shouldUseSshForConfig(nodeConfig)
+					? await this.listRemoteDockerContainers(nodeConfig)
+					: await this.listLocalDockerContainers()
+				: await this.listLocalDockerContainers();
+
+			return rawContainers
+				.map((container) => ({
+					id: container.id,
+					name: container.name,
+					image: container.image,
+					status: container.status,
+				}))
+				.sort((a, b) => a.name.localeCompare(b.name));
+		} catch (error) {
+			const execError = error as ExecError;
+			const stderr = execError.stderr?.trim() || "";
+			const message =
+				error instanceof Error
+					? error.message
+					: "Failed to list Docker containers";
+
+			if (
+				stderr.toLowerCase().includes("docker") ||
+				message.includes("docker")
+			) {
+				throw new Error(
+					`Unable to list Docker containers: ${stderr || message}. Ensure Docker is installed and accessible.`,
+				);
+			}
+
+			throw new Error(message);
+		}
+	}
+
+	async listLogFiles(
+		options: {
+			path?: string;
+		},
+		nodeConfig?: HAProxyNodeRuntimeConfig,
+	): Promise<string[]> {
+		const configuredPath = nodeConfig?.haproxyLogPath?.trim() || "";
+		const requestedPath = options.path?.trim() || configuredPath;
+
+		if (!requestedPath) {
+			throw new Error(
+				"Log file path is required. Set HAProxy log path in Node Configuration or provide path in the request.",
+			);
+		}
+
+		if (nodeConfig && this.shouldUseSshForConfig(nodeConfig)) {
+			return this.listRemoteLogFilesFromPath(nodeConfig, requestedPath);
+		}
+
+		return this.listLocalLogFilesFromPath(requestedPath);
+	}
+
+	async readLogs(
+		options: {
+			source?: HAProxyLogSource;
+			lines?: number;
+			filePath?: string;
+			containerRef?: string;
+		},
+		nodeConfig?: HAProxyNodeRuntimeConfig,
+	): Promise<HAProxyLogReadResult> {
+		const lineLimit = this.parseLineLimit(options.lines);
+		const source: HAProxyLogSource =
+			options.source ??
+			(nodeConfig?.haproxyLogSource === "container" ? "container" : "file");
+
+		if (source === "file") {
+			const configuredPath = nodeConfig?.haproxyLogPath?.trim() || "";
+			const requestedPath = options.filePath?.trim() || configuredPath;
+
+			if (!requestedPath) {
+				throw new Error(
+					"Log file path is required. Set HAProxy log path in Node Configuration or provide filePath in the request.",
+				);
+			}
+
+			if (nodeConfig && this.shouldUseSshForConfig(nodeConfig)) {
+				const remotePath = await this.resolveRemoteLogReadTarget(
+					nodeConfig,
+					requestedPath,
+				);
+				const command = `tail -n ${lineLimit} -- ${this.quoteForSh(remotePath)}`;
+				const stdout = await this.executeSshCommand(nodeConfig, command);
+				return {
+					source,
+					target: remotePath,
+					resolvedFilePath: remotePath,
+					lines: this.splitLogLines(stdout, lineLimit),
+					fetchedAt: new Date().toISOString(),
+				};
+			}
+
+			const localPath = await this.resolveLocalLogReadTarget(requestedPath);
+			const lines = await this.readLastLinesFromLocalFile(localPath, lineLimit);
+			return {
+				source,
+				target: localPath,
+				resolvedFilePath: localPath,
+				lines,
+				fetchedAt: new Date().toISOString(),
+			};
+		}
+
+		const containers = nodeConfig
+			? this.shouldUseSshForConfig(nodeConfig)
+				? await this.listRemoteDockerContainers(nodeConfig)
+				: await this.listLocalDockerContainers()
+			: await this.listLocalDockerContainers();
+
+		const resolvedContainer = this.resolveLogContainer(
+			containers,
+			options.containerRef,
+			nodeConfig,
+		);
+
+		if (nodeConfig && this.shouldUseSshForConfig(nodeConfig)) {
+			const command = `docker logs --tail ${lineLimit} --timestamps ${this.quoteForSh(resolvedContainer.name)} 2>&1`;
+			const stdout = await this.executeSshCommand(nodeConfig, command);
+			return {
+				source,
+				target: resolvedContainer.name,
+				lines: this.splitLogLines(stdout, lineLimit),
+				fetchedAt: new Date().toISOString(),
+			};
+		}
+
+		const { stdout, stderr } = await execFileAsync(
+			"docker",
+			[
+				"logs",
+				"--tail",
+				String(lineLimit),
+				"--timestamps",
+				resolvedContainer.name,
+			],
+			{
+				timeout: 8000,
+				windowsHide: true,
+			},
+		);
+
+		const merged = [stdout, stderr]
+			.filter((value): value is string => Boolean(value))
+			.join("\n");
+
+		return {
+			source,
+			target: resolvedContainer.name,
+			lines: this.splitLogLines(merged, lineLimit),
+			fetchedAt: new Date().toISOString(),
+		};
 	}
 
 	private async resolveRemoteReloadTarget(
@@ -1200,8 +1748,8 @@ export class HAProxyService {
 			"  exit 127",
 			"fi",
 			"for cfg in /usr/local/etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg; do",
-			"  if [ -f \"$cfg\" ]; then",
-			"    haproxy -c -f \"$cfg\"",
+			'  if [ -f "$cfg" ]; then',
+			'    haproxy -c -f "$cfg"',
 			"    exit $?",
 			"  fi",
 			"done",
@@ -1218,7 +1766,8 @@ export class HAProxyService {
 	async reloadConfig(nodeConfig?: HAProxyNodeRuntimeConfig): Promise<boolean> {
 		if (nodeConfig && this.shouldUseSshForConfig(nodeConfig)) {
 			try {
-				const targetContainer = await this.resolveRemoteReloadTarget(nodeConfig);
+				const targetContainer =
+					await this.resolveRemoteReloadTarget(nodeConfig);
 				await this.validateRemoteConfig(nodeConfig, targetContainer);
 				await this.executeSshCommand(
 					nodeConfig,
@@ -1405,8 +1954,8 @@ export class HAProxyService {
 					continue;
 				}
 
-				const relativePath = path
-					.posix.relative(configRoot, absPath)
+				const relativePath = path.posix
+					.relative(configRoot, absPath)
 					.replace(/\\/g, "/");
 				if (!relativePath || relativePath.startsWith("..")) {
 					continue;

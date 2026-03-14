@@ -8,6 +8,8 @@ import {
 	type HAProxyBackend,
 	type HAProxyConfig,
 	type HAProxyConfigFile,
+	type HAProxyLogContainer,
+	type HAProxyLogReadResult,
 	type HAProxyNodeRuntimeConfig,
 	type HAProxyStats,
 	haproxyService,
@@ -344,6 +346,131 @@ export function createHAProxyController() {
 								error instanceof Error
 									? error.message
 									: "Failed to read HAProxy config file",
+						};
+					}
+				},
+			)
+			.get(
+				"/logs/containers",
+				async ({
+					request,
+					set,
+				}): Promise<ApiResponse<HAProxyLogContainer[]>> => {
+					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
+						const containers = await haproxyService.listLogContainers(
+							resolved.node ?? undefined,
+						);
+
+						return {
+							success: true,
+							data: containers,
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to list Docker containers",
+						};
+					}
+				},
+			)
+			.get(
+				"/logs/files",
+				async ({
+					request,
+					query,
+					set,
+				}): Promise<ApiResponse<string[]>> => {
+					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
+						const files = await haproxyService.listLogFiles(
+							{
+								path: query.path,
+							},
+							resolved.node ?? undefined,
+						);
+
+						return {
+							success: true,
+							data: files,
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to list selectable log files",
+						};
+					}
+				},
+			)
+			.get(
+				"/logs",
+				async ({
+					request,
+					query,
+					set,
+				}): Promise<ApiResponse<HAProxyLogReadResult>> => {
+					try {
+						const nodeId = new URL(request.url).searchParams.get("nodeId");
+						const resolved = await resolveNodeConfig(nodeId);
+						if (!resolved.valid) {
+							set.status = resolved.status;
+							return {
+								success: false,
+								error: resolved.error,
+							};
+						}
+
+						const source =
+							query.source === "container" || query.source === "file"
+								? query.source
+								: undefined;
+
+						const linesRaw = Number.parseInt(query.lines ?? "", 10);
+						const logResult = await haproxyService.readLogs(
+							{
+								source,
+								filePath: query.filePath,
+								containerRef: query.containerRef,
+								lines: Number.isFinite(linesRaw) ? linesRaw : undefined,
+							},
+							resolved.node ?? undefined,
+						);
+
+						return {
+							success: true,
+							data: logResult,
+						};
+					} catch (error) {
+						return {
+							success: false,
+							error:
+								error instanceof Error
+									? error.message
+									: "Failed to read HAProxy logs",
 						};
 					}
 				},

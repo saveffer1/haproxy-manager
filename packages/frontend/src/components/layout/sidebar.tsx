@@ -1,4 +1,12 @@
-import { BarChart3, FileCode2, LayoutDashboard, User, X } from "lucide-react";
+import {
+	BarChart3,
+	FileCode2,
+	LayoutDashboard,
+	MonitorCog,
+	ScrollText,
+	User,
+	X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -6,6 +14,7 @@ export type DashboardTab =
 	| "overview"
 	| "stats"
 	| "config"
+	| "logs"
 	| "node-config"
 	| "account";
 
@@ -20,9 +29,10 @@ const navItems = [
 	{ label: "Overview", icon: LayoutDashboard, tab: "overview" as const },
 	{ label: "HAProxy Stats", icon: BarChart3, tab: "stats" as const },
 	{ label: "HAProxy Config", icon: FileCode2, tab: "config" as const },
+	{ label: "HAProxy Logs", icon: ScrollText, tab: "logs" as const },
 	{
 		label: "Node Configuration",
-		icon: FileCode2,
+		icon: MonitorCog,
 		tab: "node-config" as const,
 	},
 ];

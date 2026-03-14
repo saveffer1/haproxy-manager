@@ -668,7 +668,8 @@ export default function NodeConfiguration({
 								placeholder="haproxy or 1c7402015a88"
 							/>
 							<p className="mt-1 text-xs text-muted-foreground">
-								Optional but recommended for remote nodes with multiple HAProxy containers.
+								Optional but recommended for remote nodes with multiple HAProxy
+								containers.
 							</p>
 						</div>
 
