@@ -6,7 +6,11 @@ import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Elysia } from "elysia";
 import logixlysia from "logixlysia";
 import { env } from "./lib/env";
+import { createHealthController } from "./controllers/healthController";
+import { createNodeController } from "./controllers/nodeController";
+import { createHAProxyController } from "./controllers/haproxyController";
 
+// Initialize Elysia app with plugins
 const app = new Elysia()
 	.use(
 		logixlysia({
@@ -35,14 +39,12 @@ const app = new Elysia()
 			),
 		}),
 	)
-	.get("/", () => ({ message: "HAProxy Manager API" }))
-	.get("/haproxy/stats", () => {
-		return {
-			status: "online",
-			uptime: "2h 45m",
-			active_sessions: 120,
-		};
-	})
+	// Register controllers
+	.use(createHealthController())
+	.use(createNodeController())
+	.use(createHAProxyController())
 	.listen(3000);
+
+console.log("🚀 HAProxy Manager API running on http://localhost:3000");
 
 export type App = typeof app;

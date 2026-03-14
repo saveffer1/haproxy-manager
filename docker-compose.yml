@@ -26,32 +26,43 @@ services:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
 
+  nginx-helloworld:
+    image: nginx:alpine
+    container_name: nginx-helloworld
+    volumes:
+      - "./haproxy/nginx-helloworld.html:/usr/share/nginx/html/index.html:ro"
+    ports:
+      - "8081:80"
+    restart: always
+
   haproxy:
-    image: haproxy:2.8-alpine
+    image: haproxy:3.3-alpine
+    network_mode: host
     volumes:
-      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-    ports:
-      - "8404:8404"
-
-  backend:
-    image: oven/bun:alpine
-    working_dir: /app
-    volumes:
-      - .:/app
-    command: bun dev:backend
-    ports:
-      - "3000:3000"
-
-  frontend:
-    image: oven/bun:alpine
-    working_dir: /app
-    volumes:
-      - .:/app
-    command: bun dev:frontend
-    ports:
-      - "5173:5173"
+      - ./haproxy/conf.d:/usr/local/etc/haproxy/conf.d:ro
+    command: ["haproxy", "-f", "/usr/local/etc/haproxy/conf.d/"]
     depends_on:
-      - backend
+      - nginx-helloworld
+
+  # backend:
+  #   image: oven/bun:alpine
+  #   working_dir: /app
+  #   volumes:
+  #     - .:/app
+  #   command: bun dev:backend
+  #   ports:
+  #     - "3000:3000"
+
+  # frontend:
+  #   image: oven/bun:alpine
+  #   working_dir: /app
+  #   volumes:
+  #     - .:/app
+  #   command: bun dev:frontend
+  #   ports:
+  #     - "5173:5173"
+  #   depends_on:
+  #     - backend
 
 volumes:
   redis_data:
