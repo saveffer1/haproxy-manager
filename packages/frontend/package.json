@@ -1,0 +1,21 @@
+{
+	"name": "@app/frontend",
+	"private": true,
+	"dependencies": {
+		"react": "^18.2.0",
+		"react-dom": "^18.2.0",
+		"envalid": "^8.1.1",
+		"elysia": "^1.4.27",
+		"@elysiajs/eden": "latest",
+		"@app/backend": "workspace:*"
+	},
+	"devDependencies": {
+		"vite": "latest",
+		"@types/react": "^18.2.0",
+		"@types/react-dom": "^18.2.0",
+		"bun-types": "latest"
+	},
+	"scripts": {
+		"dev": "vite --host 0.0.0.0"
+	}
+}

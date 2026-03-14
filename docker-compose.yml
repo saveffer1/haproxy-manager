@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: haproxy_db
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+  
+  otel-collector:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger-tracing
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+
+  haproxy:
+    image: haproxy:2.8-alpine
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "8404:8404"
+
+  backend:
+    image: oven/bun:alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: bun dev:backend
+    ports:
+      - "3000:3000"
+
+  frontend:
+    image: oven/bun:alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: bun dev:frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  redis_data:
