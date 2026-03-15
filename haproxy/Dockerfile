@@ -1,6 +1,6 @@
 FROM haproxy:3.3-alpine
 
-USER root
+USER 0:0
 
 RUN apk add --no-cache logrotate
 
