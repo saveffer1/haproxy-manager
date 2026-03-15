@@ -1,5 +1,7 @@
 FROM haproxy:3.3-alpine
 
+USER root
+
 RUN apk add --no-cache logrotate
 
 COPY ./haproxy/logrotate.cfg /etc/logrotate.d/haproxy
