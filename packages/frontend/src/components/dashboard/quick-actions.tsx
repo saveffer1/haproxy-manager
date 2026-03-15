@@ -33,7 +33,7 @@ export default function QuickActions({
 }: QuickActionsProps) {
 	const backendOrigin = resolveBackendOrigin(env.VITE_BACKEND_URL);
 	const openApiDocsUrl = new URL("/openapi", backendOrigin).toString();
-	const openTelemetryUrl = new URL("/", env.OTEL_DASHBOARD_URL).toString();
+	const openTelemetryUrl = new URL("/otel", backendOrigin).toString();
 
 	return (
 		<Card className="animate-fade-up">

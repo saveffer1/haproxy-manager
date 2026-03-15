@@ -35,65 +35,59 @@ A full-stack application for managing HAProxy infrastructure with real-time moni
 
 ## 🚀 Quick Start
 
-### Automated Setup (Windows/macOS)
+1. **(Optional) copy env template**
+  ```bash
+  cp .env.example .env
+  ```
+  You can skip this step if defaults are fine.
+
+Environment strategy:
+- Use root `.env` as the single shared env source for Docker Compose.
+- Frontend build variables are injected only from `docker-compose.yml` build args.
+
+2. **Start everything**
+  ```bash
+  docker compose up -d --build
+  ```
+
+3. **Open Web UI**
+  - http://localhost:5173
+
+4. **Login with default account**
+  - Username: `admin`
+  - Password: `admin12345`
+
+5. **Default node is auto-created**
+  - Name: `docker-haproxy-localnode`
+  - Target HAProxy: `haproxy` service in compose network
+  - The seed is idempotent (won't duplicate by same name/IP)
+
+### Forgot Password (Reset via Docker Exec)
+
+If you cannot login to Web UI, reset password directly from backend container:
 
 ```bash
-# Windows
-./setup.bat
-
-# macOS/Linux
-./setup.sh
+docker compose exec backend bun run auth:reset-password -- --username admin --password NewStrongPassword123
 ```
 
-The setup script will:
-1. Install dependencies
-2. Start Docker services (PostgreSQL, Redis, HAProxy, Jaeger)
-3. Initialize database schema
-4. Display access URLs
+For multi-user environments, use one of these selectors explicitly:
 
-### Manual Setup
+```bash
+docker compose exec backend bun run auth:reset-password -- --username someuser --password NewStrongPassword123
+docker compose exec backend bun run auth:reset-password -- --email user@example.com --password NewStrongPassword123
+```
 
-1. **Install dependencies**
-   ```bash
-   bun install
-   ```
+Short one-shot command (default admin):
 
-2. **Start infrastructure services**
-   ```bash
-   docker-compose up -d
-   ```
+```bash
+docker compose exec backend bun run auth:reset-admin -- --password NewStrongPassword123
+```
 
-3. **Wait for PostgreSQL to be ready**
-   ```bash
-   # Wait ~30 seconds for the database to initialize
-   ```
+Or by email:
 
-4. **Initialize database schema**
-   ```bash
-   bun --filter @app/backend run db:push
-   ```
-
-5. **Default node is auto-registered on backend startup**
-  - The backend seeds one default node if no node exists with the same name or IP.
-  - Configure it with environment variables:
-    - `DEFAULT_NODE_NAME` (default: `local-haproxy-node`)
-    - `DEFAULT_NODE_IP_ADDRESS` (default: `127.0.0.1`)
-    - `DEFAULT_NODE_TYPE` (`managed` or `monitored`, default: `managed`)
-    - `DEFAULT_NODE_LOG_STRATEGY` (`docker`, `file`, `journald`, default: `docker`)
-    - `DEFAULT_NODE_LOG_PATH` (optional, default: empty)
-    - `DEFAULT_NODE_SSH_USER` (default: `root`)
-
-6. **Start development servers**
-   
-   In one terminal:
-   ```bash
-   bun dev:backend
-   ```
-   
-   In another terminal:
-   ```bash
-   bun dev:frontend
-   ```
+```bash
+docker compose exec backend bun run auth:reset-password -- --email admin@local.dev --password NewStrongPassword123
+```
 
 ## 🌐 Access Points
 
@@ -251,9 +245,14 @@ bun --filter @app/backend run db:push          # Apply migrations
 bun --filter @app/backend run db:studio        # Open Drizzle Studio
 
 # Docker operations
-docker-compose up -d      # Start services
-docker-compose down       # Stop services
-docker-compose logs -f    # View logs
+docker compose up -d --build      # Start services
+docker compose down               # Stop services
+docker compose logs -f            # View logs
+
+# Password reset from container
+docker compose exec backend bun run auth:reset-password -- --username admin --password NewStrongPassword123
+docker compose exec backend bun run auth:reset-password -- --email admin@local.dev --password NewStrongPassword123
+docker compose exec backend bun run auth:reset-admin -- --password NewStrongPassword123
 ```
 
 ## 📊 HAProxy Configuration

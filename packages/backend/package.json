@@ -4,8 +4,11 @@
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
 		"dev": "bun run --watch src/index.ts",
+		"start": "bun run src/index.ts",
 		"db:push": "bunx drizzle-kit push",
-		"db:studio": "bunx drizzle-kit studio"
+		"db:studio": "bunx drizzle-kit studio",
+		"auth:reset-password": "bun run src/scripts/reset-password.ts",
+		"auth:reset-admin": "bun run src/scripts/reset-password.ts --username admin"
 	},
 	"dependencies": {
 		"@elysiajs/cors": "^1.4.1",

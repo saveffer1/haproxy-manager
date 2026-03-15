@@ -183,6 +183,19 @@ export async function ensureDefaultNode() {
 			? env.DEFAULT_NODE_LOG_STRATEGY
 			: "docker";
 
+	const defaultStatsUrl =
+		env.DEFAULT_NODE_HAPROXY_STATS_URL.trim() ||
+		`http://${env.DEFAULT_NODE_IP_ADDRESS}:8404/stats`;
+	const defaultSocketPath =
+		env.DEFAULT_NODE_HAPROXY_SOCKET_PATH.trim() || env.HAPROXY_SOCKET_PATH;
+	const defaultApiUrl =
+		env.DEFAULT_NODE_HAPROXY_API_URL.trim() ||
+		`http://${env.DEFAULT_NODE_IP_ADDRESS}:3000`;
+	const defaultConfigPath =
+		env.DEFAULT_NODE_HAPROXY_CONFIG_PATH.trim() || env.HAPROXY_CONFIG_DIR;
+	const defaultLogPath =
+		env.DEFAULT_NODE_HAPROXY_LOG_PATH.trim() || env.DEFAULT_NODE_LOG_PATH;
+
 	try {
 		const existing = await db
 			.select({ id: nodes.id })
@@ -202,16 +215,16 @@ export async function ensureDefaultNode() {
 		await db.insert(nodes).values({
 			name: env.DEFAULT_NODE_NAME,
 			ipAddress: env.DEFAULT_NODE_IP_ADDRESS,
-			isLocalService: isLocalHostValue(env.DEFAULT_NODE_IP_ADDRESS),
+			isLocalService: env.DEFAULT_NODE_IS_LOCAL_SERVICE,
 			type: nodeType,
 			source: "manual",
 			logStrategy,
 			logPath: env.DEFAULT_NODE_LOG_PATH || null,
-			haproxyStatsUrl: `http://${env.DEFAULT_NODE_IP_ADDRESS}:8404/stats`,
-			haproxySocketPath: env.HAPROXY_SOCKET_PATH,
-			haproxyApiUrl: `http://${env.DEFAULT_NODE_IP_ADDRESS}:3000`,
-			haproxyConfigPath: env.HAPROXY_CONFIG_DIR,
-			haproxyLogPath: env.DEFAULT_NODE_LOG_PATH || null,
+			haproxyStatsUrl: defaultStatsUrl,
+			haproxySocketPath: defaultSocketPath || null,
+			haproxyApiUrl: defaultApiUrl,
+			haproxyConfigPath: defaultConfigPath,
+			haproxyLogPath: defaultLogPath || null,
 			haproxyLogSource: "container",
 			sshUser: env.DEFAULT_NODE_SSH_USER,
 			sshPort: Number.parseInt(env.DEFAULT_NODE_SSH_PORT, 10) || 22,

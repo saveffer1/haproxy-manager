@@ -15,6 +15,10 @@ import { env } from "./lib/env";
 import { ensureDefaultNode } from "./services/nodeService";
 import { ensureSshKeyPair } from "./services/sshService";
 
+type BetterAuthSessionLookup = {
+	user?: unknown;
+} | null;
+
 function getBearerToken(authorizationHeader: string | null) {
 	if (!authorizationHeader) {
 		return null;
@@ -26,6 +30,37 @@ function getBearerToken(authorizationHeader: string | null) {
 	}
 
 	return value;
+}
+
+const sessionProtectedPrefixes = ["/openapi", "/swagger", "/otel"];
+const publicRoutePrefixes = ["/", "/health"];
+
+function isSessionProtectedPath(pathname: string) {
+	return sessionProtectedPrefixes.some((prefix) =>
+		pathname === prefix || pathname.startsWith(`${prefix}/`),
+	);
+}
+
+function isPublicRoute(pathname: string) {
+	return publicRoutePrefixes.some((prefix) =>
+		pathname === prefix || pathname.startsWith(`${prefix}/`),
+	);
+}
+
+async function hasBetterAuthSession(request: Request) {
+	const authApi = auth.api as {
+		getSession: (args: { headers: Headers }) => Promise<BetterAuthSessionLookup>;
+	};
+
+	const session = await authApi.getSession({
+		headers: request.headers,
+	});
+
+	return Boolean(session?.user);
+}
+
+function isBetterAuthRoute(pathname: string) {
+	return pathname === "/api/auth" || pathname.startsWith("/api/auth/");
 }
 
 // Initialize Elysia app with plugins
@@ -57,7 +92,7 @@ const app = new Elysia()
 	)
 	.use(openapi())
 	.use(apiKeySupportPlugin())
-	.onBeforeHandle((ctx) => {
+	.onBeforeHandle(async (ctx) => {
 		const { request, set } = ctx;
 		const requestPath = new URL(request.url).pathname;
 		const keyFromHeader = request.headers.get("x-api-key");
@@ -69,8 +104,33 @@ const app = new Elysia()
 			return;
 		}
 
-		// HAProxy stats UI is protected by Better Auth session in its controller.
-		if (requestPath === "/haproxy/stats/ui") {
+		if (isBetterAuthRoute(requestPath)) {
+			return;
+		}
+
+		if (isPublicRoute(requestPath)) {
+			return;
+		}
+
+		// These routes should rely on Better Auth session cookies, not API keys.
+		if (
+			requestPath === "/haproxy/stats/ui" ||
+			isSessionProtectedPath(requestPath)
+		) {
+			const authenticated = await hasBetterAuthSession(request);
+			if (!authenticated) {
+				set.status = 401;
+				return {
+					success: false,
+					error: "Authentication required",
+				};
+			}
+
+			return;
+		}
+
+		const hasSession = await hasBetterAuthSession(request);
+		if (hasSession) {
 			return;
 		}
 
@@ -78,7 +138,7 @@ const app = new Elysia()
 			set.status = 401;
 			return {
 				success: false,
-				error: "Missing API key. Send x-api-key or Authorization: Bearer <key>",
+				error: "Authentication required",
 			};
 		}
 
@@ -100,6 +160,9 @@ const app = new Elysia()
 			),
 		}),
 	)
+	.get("/otel", () => {
+		return Response.redirect(new URL("/", env.OTEL_DASHBOARD_URL), 302);
+	})
 	.all("/api/auth", ({ request }) => auth.handler(request))
 	.all("/api/auth/*", ({ request }) => auth.handler(request))
 	.use(createAuthController())

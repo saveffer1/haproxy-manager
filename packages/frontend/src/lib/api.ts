@@ -287,18 +287,6 @@ function requireNodeId(nodeId?: string | null) {
 	return normalized;
 }
 
-function buildApiKeyHeaders() {
-	const configuredApiKey = env.VITE_API_KEY.trim();
-	if (!configuredApiKey) {
-		throw new Error("Missing API key configuration (VITE_API_KEY/API_KEY)");
-	}
-
-	return {
-		"x-api-key": configuredApiKey,
-		Authorization: `Bearer ${configuredApiKey}`,
-	};
-}
-
 async function parseErrorMessage(response: Response) {
 	try {
 		const body = (await response.json()) as
@@ -323,7 +311,6 @@ const api = treaty<App>(env.VITE_BACKEND_URL, {
 	},
 	headers: () => ({
 		"Content-Type": "application/json",
-		...buildApiKeyHeaders(),
 	}),
 });
 
@@ -364,12 +351,9 @@ async function requestTreaty<T>(request: Promise<TreatyResponse>): Promise<T> {
 }
 
 async function getJsonRaw<T>(path: string): Promise<T> {
-	const apiKeyHeaders = buildApiKeyHeaders();
-
 	const response = await fetch(`${env.VITE_BACKEND_URL}${path}`, {
 		headers: {
 			"Content-Type": "application/json",
-			...apiKeyHeaders,
 		},
 		credentials: "include",
 	});
@@ -383,13 +367,10 @@ async function getJsonRaw<T>(path: string): Promise<T> {
 }
 
 async function postJsonRaw<T>(path: string, payload: unknown): Promise<T> {
-	const apiKeyHeaders = buildApiKeyHeaders();
-
 	const response = await fetch(`${env.VITE_BACKEND_URL}${path}`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
-			...apiKeyHeaders,
 		},
 		credentials: "include",
 		body: JSON.stringify(payload),
@@ -408,13 +389,10 @@ async function postJsonRaw<T>(path: string, payload: unknown): Promise<T> {
 }
 
 async function putJsonRaw<T>(path: string, payload: unknown): Promise<T> {
-	const apiKeyHeaders = buildApiKeyHeaders();
-
 	const response = await fetch(`${env.VITE_BACKEND_URL}${path}`, {
 		method: "PUT",
 		headers: {
 			"Content-Type": "application/json",
-			...apiKeyHeaders,
 		},
 		credentials: "include",
 		body: JSON.stringify(payload),
@@ -433,13 +411,10 @@ async function putJsonRaw<T>(path: string, payload: unknown): Promise<T> {
 }
 
 async function deleteJsonRaw<T>(path: string): Promise<T> {
-	const apiKeyHeaders = buildApiKeyHeaders();
-
 	const response = await fetch(`${env.VITE_BACKEND_URL}${path}`, {
 		method: "DELETE",
 		headers: {
 			"Content-Type": "application/json",
-			...apiKeyHeaders,
 		},
 		credentials: "include",
 	});
@@ -456,17 +431,8 @@ async function deleteJsonRaw<T>(path: string): Promise<T> {
 	return (await response.json()) as T;
 }
 
-async function apiFetchText(
-	path: string,
-	options: { includeApiKey?: boolean } = {},
-): Promise<string> {
-	const includeApiKey = options.includeApiKey ?? true;
-	const apiKeyHeaders = includeApiKey ? buildApiKeyHeaders() : {};
-
+async function apiFetchText(path: string): Promise<string> {
 	const response = await fetch(`${env.VITE_BACKEND_URL}${path}`, {
-		headers: {
-			...apiKeyHeaders,
-		},
 		credentials: "include",
 	});
 
@@ -629,9 +595,7 @@ export async function getHAProxyStatsDashboardHtml(
 	const query = new URLSearchParams({ theme });
 	query.set("nodeId", scopedNodeId);
 
-	return apiFetchText(`/haproxy/stats/ui?${query.toString()}`, {
-		includeApiKey: false,
-	});
+	return apiFetchText(`/haproxy/stats/ui?${query.toString()}`);
 }
 
 export async function getHAProxyStatsCapabilities(

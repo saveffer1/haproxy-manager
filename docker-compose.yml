@@ -1,25 +1,39 @@
 services:
   postgres:
     image: postgres:17-alpine
+    container_name: haproxy-manager-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
       POSTGRES_DB: haproxy_db
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d haproxy_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: always
 
   redis:
     image: redis:alpine
+    container_name: haproxy-manager-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     restart: always
   
   otel-collector:
     image: jaegertracing/all-in-one:latest
-    container_name: jaeger-tracing
+    container_name: haproxy-manager-jaeger
     ports:
       - "16686:16686"
       - "4318:4318"
@@ -38,6 +52,7 @@ services:
 
   haproxy:
     image: haproxy:3.3-alpine
+    container_name: haproxy
     volumes:
       - ./haproxy/conf.d:/usr/local/etc/haproxy/conf.d:ro
       - ./haproxy/haproxy_socket:/var/run/
@@ -50,26 +65,73 @@ services:
       - nginx-helloworld
     restart: always
 
-  # backend:
-  #   image: oven/bun:alpine
-  #   working_dir: /app
-  #   volumes:
-  #     - .:/app
-  #   command: bun dev:backend
-  #   ports:
-  #     - "3000:3000"
+  backend:
+    build:
+      context: .
+      dockerfile: ./packages/backend/Dockerfile
+    container_name: haproxy-manager-backend
+    working_dir: /workspace/packages/backend
+    environment:
+      NODE_ENV: "${NODE_ENV:-production}"
+      API_KEY: "${API_KEY:-haproxy-manager-local-api-key}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:-replace-me-in-production-please-change-this-secret}"
+      BETTER_AUTH_URL: "${BETTER_AUTH_URL:-http://localhost:3000}"
+      BETTER_AUTH_TRUSTED_ORIGINS: "${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+      DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/haproxy_db"
+      REDIS_URL: "redis://redis:6379"
+      OTEL_URL: "http://otel-collector:4318/v1/traces"
+      OTEL_DASHBOARD_URL: "${OTEL_DASHBOARD_URL:-http://otel-collector:16686}"
+      DEFAULT_ADMIN_USERNAME: "${DEFAULT_ADMIN_USERNAME:-admin}"
+      DEFAULT_ADMIN_EMAIL: "${DEFAULT_ADMIN_EMAIL:-admin@local.dev}"
+      DEFAULT_ADMIN_PASSWORD: "${DEFAULT_ADMIN_PASSWORD:-admin12345}"
+      DEFAULT_NODE_NAME: "${DEFAULT_NODE_NAME:-docker-haproxy-localnode}"
+      DEFAULT_NODE_IP_ADDRESS: "${DEFAULT_NODE_IP_ADDRESS:-haproxy}"
+      DEFAULT_NODE_IS_LOCAL_SERVICE: "${DEFAULT_NODE_IS_LOCAL_SERVICE:-true}"
+      DEFAULT_NODE_TYPE: "${DEFAULT_NODE_TYPE:-managed}"
+      DEFAULT_NODE_LOG_STRATEGY: "${DEFAULT_NODE_LOG_STRATEGY:-docker}"
+      DEFAULT_NODE_SSH_USER: "${DEFAULT_NODE_SSH_USER:-root}"
+      DEFAULT_NODE_SSH_PORT: "${DEFAULT_NODE_SSH_PORT:-22}"
+      DEFAULT_NODE_HAPROXY_STATS_URL: "${DEFAULT_NODE_HAPROXY_STATS_URL:-http://haproxy:8404/stats}"
+      DEFAULT_NODE_HAPROXY_SOCKET_PATH: "${DEFAULT_NODE_HAPROXY_SOCKET_PATH:-haproxy:16669}"
+      DEFAULT_NODE_HAPROXY_API_URL: "${DEFAULT_NODE_HAPROXY_API_URL:-http://backend:3000}"
+      DEFAULT_NODE_HAPROXY_CONFIG_PATH: "${DEFAULT_NODE_HAPROXY_CONFIG_PATH:-/workspace/haproxy/conf.d}"
+      HAPROXY_STATS_URL: "${HAPROXY_STATS_URL:-http://haproxy:8404/stats}"
+      HAPROXY_SOCKET_ENABLED: "${HAPROXY_SOCKET_ENABLED:-true}"
+      HAPROXY_SOCKET_PATH: "${HAPROXY_SOCKET_PATH:-haproxy:16669}"
+      HAPROXY_CONFIG_DIR: "${HAPROXY_CONFIG_DIR:-/workspace/haproxy/conf.d}"
+      HAPROXY_RELOAD_COMMAND: "${HAPROXY_RELOAD_COMMAND:-docker restart haproxy}"
+      HAPROXY_VALIDATE_COMMAND: "${HAPROXY_VALIDATE_COMMAND:-docker exec haproxy haproxy -f /usr/local/etc/haproxy/conf.d -c}"
+      SSH_KEY_DIR: "${SSH_KEY_DIR:-.runtime/ssh}"
+    volumes:
+      - ./haproxy/conf.d:/workspace/haproxy/conf.d
+      - ./packages/backend/.runtime:/workspace/packages/backend/.runtime
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      haproxy:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    restart: always
 
-  # frontend:
-  #   image: oven/bun:alpine
-  #   working_dir: /app
-  #   volumes:
-  #     - .:/app
-  #   command: bun dev:frontend
-  #   ports:
-  #     - "5173:5173"
-  #   depends_on:
-  #     - backend
+  frontend:
+    build:
+      context: .
+      dockerfile: ./packages/frontend/Dockerfile
+      args:
+        VITE_BACKEND_URL: "${VITE_BACKEND_URL:-http://localhost:3000}"
+    container_name: haproxy-manager-frontend
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "5173:80"
+    restart: always
 
 volumes:
+  postgres_data:
   redis_data:
   haproxy_socket:

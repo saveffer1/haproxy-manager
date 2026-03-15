@@ -10,6 +10,7 @@ const trustedOrigins = env.BETTER_AUTH_TRUSTED_ORIGINS.split(",")
 	.filter(Boolean);
 
 export const auth = betterAuth({
+	secret: env.BETTER_AUTH_SECRET,
 	baseURL: env.BETTER_AUTH_URL,
 	basePath: "/api/auth",
 	trustedOrigins,
@@ -29,8 +30,7 @@ export const auth = betterAuth({
 });
 
 export async function ensureDefaultAdminUser() {
-	// Only seed a default user when both email and password are explicitly configured.
-	// This avoids shipping a build that automatically authorizes a weak hardcoded account.
+	// Seed default admin credentials in local Docker/dev setup.
 	if (!env.DEFAULT_ADMIN_EMAIL || !env.DEFAULT_ADMIN_PASSWORD) {
 		console.log(
 			"[auth] Skipping default admin user seed because DEFAULT_ADMIN_EMAIL or DEFAULT_ADMIN_PASSWORD is not set.",
@@ -76,7 +76,7 @@ export async function ensureDefaultAdminUser() {
 				username: env.DEFAULT_ADMIN_USERNAME,
 			},
 		});
-		console.log("[auth] Seeded default dev user for Better Auth.");
+		console.log("[auth] Seeded default admin user for Better Auth.");
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (message.includes('relation "user" does not exist')) {

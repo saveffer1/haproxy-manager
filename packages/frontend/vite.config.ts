@@ -41,23 +41,12 @@ function readEnvValue(filePath: string, key: string) {
 
 export default defineConfig(() => {
 	const frontendDir = fileURLToPath(new URL(".", import.meta.url));
-	const backendEnvPath = path.resolve(frontendDir, "../backend/.env");
-	const backendLocalEnvPath = path.resolve(
-		frontendDir,
-		"../backend/.env.local",
-	);
-
-	const apiKeyFromBackend =
-		readEnvValue(backendLocalEnvPath, "API_KEY") ??
-		readEnvValue(backendEnvPath, "API_KEY") ??
-		"";
+	const rootEnvPath = path.resolve(frontendDir, "../../.env");
 
 	const backendUrlFromBackend =
-		readEnvValue(backendLocalEnvPath, "BETTER_AUTH_URL") ??
-		readEnvValue(backendEnvPath, "BETTER_AUTH_URL") ??
+		readEnvValue(rootEnvPath, "BETTER_AUTH_URL") ??
 		"http://localhost:3000";
 
-	const envApiKey = process.env.VITE_API_KEY ?? apiKeyFromBackend;
 	const envBackendUrl = process.env.VITE_BACKEND_URL ?? backendUrlFromBackend;
 
 	return {
@@ -67,7 +56,6 @@ export default defineConfig(() => {
 			},
 		},
 		define: {
-			"import.meta.env.VITE_API_KEY": JSON.stringify(envApiKey),
 			"import.meta.env.VITE_BACKEND_URL": JSON.stringify(envBackendUrl),
 		},
 	};
