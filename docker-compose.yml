@@ -120,13 +120,15 @@ services:
       args:
         VITE_BACKEND_URL: "${VITE_BACKEND_URL:-}"
     container_name: haproxy-manager-frontend
+    environment:
+      FRONTEND_BACKEND_UPSTREAM: "${FRONTEND_BACKEND_UPSTREAM:-http://127.0.0.1:4320}"
     volumes:
       - ./packages/frontend/certs:/etc/nginx/certs
     command:
       [
         "sh",
         "-lc",
-        "mkdir -p /etc/nginx/certs; if [ ! -f /etc/nginx/certs/localhost.crt ] || [ ! -f /etc/nginx/certs/localhost.key ]; then openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/nginx/certs/localhost.key -out /etc/nginx/certs/localhost.crt -days 3650 -subj '/CN=localhost'; fi; nginx -g 'daemon off;'",
+        "mkdir -p /etc/nginx/certs; if [ ! -f /etc/nginx/certs/localhost.crt ] || [ ! -f /etc/nginx/certs/localhost.key ]; then openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/nginx/certs/localhost.key -out /etc/nginx/certs/localhost.crt -days 3650 -subj '/CN=localhost'; fi; envsubst '$${FRONTEND_BACKEND_UPSTREAM}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf; nginx -g 'daemon off;'",
       ]
     depends_on:
       backend:

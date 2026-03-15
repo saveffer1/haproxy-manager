@@ -21,7 +21,7 @@ FROM nginx:alpine
 
 RUN apk add --no-cache openssl
 
-COPY packages/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY packages/frontend/nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /workspace/packages/frontend/dist /usr/share/nginx/html
 
 EXPOSE 80
