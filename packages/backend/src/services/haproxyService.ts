@@ -992,7 +992,13 @@ export class HAProxyService {
 			detailItems,
 		};
 
-		if (nodeConfig.source !== "docker") {
+		const shouldCollectDockerRuntime =
+			nodeConfig.source === "docker" ||
+			nodeConfig.logStrategy === "docker" ||
+			nodeConfig.isLocalService ||
+			Boolean(nodeConfig.haproxyContainerRef?.trim());
+
+		if (!shouldCollectDockerRuntime) {
 			if (nodeConfig.source === "remote") {
 				runtime.note =
 					"Remote node mode: runtime/container metadata depends on remote integrations and may be limited.";

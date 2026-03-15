@@ -56,6 +56,31 @@ const initialState: DashboardSummary = {
 
 const NODE_SELECTION_DEBOUNCE_MS = 250;
 
+function getPreferredDefaultNodeId(nodes: DashboardSummary["nodes"]) {
+	const localManagedNode = nodes.find(
+		(node) => node.isLocalService && node.type === "managed",
+	);
+	if (localManagedNode) {
+		return localManagedNode.id;
+	}
+
+	const managedNode = nodes.find((node) => node.type === "managed");
+	if (managedNode) {
+		return managedNode.id;
+	}
+
+	return nodes[0]?.id ?? null;
+}
+
+function normalizeUptime(value?: string | null) {
+	const normalized = value?.trim();
+	if (!normalized || normalized.toLowerCase() === "n/a") {
+		return null;
+	}
+
+	return normalized;
+}
+
 export default function DashboardPage() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
@@ -158,12 +183,13 @@ export default function DashboardPage() {
 				const hasSelectedNode = response.nodes.some(
 					(node) => node.id === selectedNodeId,
 				);
-				if (
-					(!selectedNodeId || !hasSelectedNode) &&
-					response.nodes.length > 0 &&
-					response.nodes[0]
-				) {
-					setSelectedNodeId(response.nodes[0].id);
+				if ((!selectedNodeId || !hasSelectedNode) && response.nodes.length > 0) {
+					const preferredDefaultNodeId = getPreferredDefaultNodeId(
+						response.nodes,
+					);
+					if (preferredDefaultNodeId) {
+						setSelectedNodeId(preferredDefaultNodeId);
+					}
 				}
 			})
 			.finally(() => {
@@ -499,7 +525,9 @@ export default function DashboardPage() {
 		(activeTab === "stats" || activeTab === "config" || activeTab === "logs");
 
 	const selectedNodeUptime =
-		scopedStats?.uptime ?? selectedNodeRuntime?.docker?.uptime ?? "n/a";
+		normalizeUptime(scopedStats?.uptime) ??
+		normalizeUptime(selectedNodeRuntime?.docker?.uptime) ??
+		"n/a";
 	const statsWarning = scopedStats?.warning?.trim() || null;
 
 	const haproxyStatus = (scopedStats?.status ?? "unknown").toLowerCase();
