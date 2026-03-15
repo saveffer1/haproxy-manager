@@ -208,15 +208,6 @@ export type HAProxyLogReadResult = {
 
 type ThemeMode = "light" | "dark";
 
-type BetterAuthDefaultUserResponse = {
-	success: boolean;
-	data?: {
-		username: string;
-		email: string;
-	};
-	error?: string;
-};
-
 type BetterAuthResolveIdentityResponse = {
 	success: boolean;
 	data?: {
@@ -574,24 +565,9 @@ export async function changeBetterAuthPassword(input: ChangePasswordInput) {
 }
 
 export async function getBetterAuthDefaultIdentity(): Promise<BetterAuthDefaultIdentity> {
-	try {
-		const response = await requestTreaty<BetterAuthDefaultUserResponse>(
-			api.auth["dev-default-user"].get(),
-		);
-		if (!response.success || !response.data) {
-			return {
-				username: "admin",
-				email: "admin@local.dev",
-			};
-		}
-
-		return response.data;
-	} catch {
-		return {
-			username: "admin",
-			email: "admin@local.dev",
-		};
-	}
+	// This endpoint is no longer supported. Return an empty identity to avoid
+	// exposing any default credentials.
+	return { username: "", email: "" };
 }
 
 export async function getDashboardSummary(

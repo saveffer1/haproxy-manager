@@ -3,10 +3,11 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
       POSTGRES_DB: haproxy_db
     ports:
       - "5432:5432"
+    restart: always
 
   redis:
     image: redis:alpine
@@ -47,6 +48,7 @@ services:
       - "127.0.0.1:16669:16669"
     depends_on:
       - nginx-helloworld
+    restart: always
 
   # backend:
   #   image: oven/bun:alpine

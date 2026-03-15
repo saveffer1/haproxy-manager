@@ -1,5 +1,5 @@
 import { KeyRound } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getBetterAuthDefaultIdentity, loginWithBetterAuth } from "@/lib/api";
+import { loginWithBetterAuth } from "@/lib/api";
 import { useAuth } from "@/providers/auth-provider";
 
 type LocationState = {
@@ -22,17 +22,10 @@ export default function LoginPage() {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const { isAuthenticated, login, isLoadingSession } = useAuth();
-	const [username, setUsername] = useState("admin");
-	const [password, setPassword] = useState("admin12345");
+	const [username, setUsername] = useState("");
+	const [password, setPassword] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-
-	useEffect(() => {
-		void (async () => {
-			const identity = await getBetterAuthDefaultIdentity();
-			setUsername(identity.username);
-		})();
-	}, []);
 
 	if (!isLoadingSession && isAuthenticated) {
 		return <Navigate to="/dashboard" replace />;
@@ -94,7 +87,7 @@ export default function LoginPage() {
 								<Input
 									id="username"
 									type="text"
-									placeholder="admin"
+									placeholder="Username or email"
 									value={username}
 									onChange={(event) => setUsername(event.target.value)}
 									required

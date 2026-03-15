@@ -2,7 +2,6 @@ import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../database/db";
 import { user } from "../database/schema";
-import { env } from "../lib/env";
 import type { ApiResponse } from "../types/common";
 
 export function createAuthController() {
@@ -56,18 +55,6 @@ export function createAuthController() {
 			},
 		)
 		.get(
-			"/dev-default-user",
-			(): ApiResponse<{ username: string; email: string }> => {
-				return {
-					success: true,
-					data: {
-						username: env.DEFAULT_ADMIN_USERNAME,
-						email: env.DEFAULT_ADMIN_EMAIL,
-					},
-				};
-			},
-		)
-		.get(
 			"/auth-mode",
 			(): ApiResponse<{ mode: string; endpoint: string }> => ({
 				success: true,
@@ -76,5 +63,6 @@ export function createAuthController() {
 					endpoint: "/api/auth/sign-in/email",
 				},
 			}),
-		);
+		)
+		;
 }

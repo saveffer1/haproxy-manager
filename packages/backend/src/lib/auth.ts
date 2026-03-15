@@ -29,6 +29,15 @@ export const auth = betterAuth({
 });
 
 export async function ensureDefaultAdminUser() {
+	// Only seed a default user when both email and password are explicitly configured.
+	// This avoids shipping a build that automatically authorizes a weak hardcoded account.
+	if (!env.DEFAULT_ADMIN_EMAIL || !env.DEFAULT_ADMIN_PASSWORD) {
+		console.log(
+			"[auth] Skipping default admin user seed because DEFAULT_ADMIN_EMAIL or DEFAULT_ADMIN_PASSWORD is not set.",
+		);
+		return;
+	}
+
 	const authApi = auth.api as {
 		signInEmail: (args: {
 			body: {

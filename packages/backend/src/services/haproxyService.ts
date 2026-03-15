@@ -1261,17 +1261,19 @@ export class HAProxyService {
 			return null;
 		}
 
-		const basicAuth = Buffer.from(
-			`${env.HAPROXY_STATS_USERNAME}:${env.HAPROXY_STATS_PASSWORD}`,
-		).toString("base64");
+		const headers: Record<string, string> = {};
+		if (env.HAPROXY_STATS_USERNAME && env.HAPROXY_STATS_PASSWORD) {
+			const basicAuth = Buffer.from(
+				`${env.HAPROXY_STATS_USERNAME}:${env.HAPROXY_STATS_PASSWORD}`,
+			).toString("base64");
+			headers.Authorization = `Basic ${basicAuth}`;
+		}
 
 		const csvUrl = new URL(statsUrl.toString());
 		csvUrl.pathname = "/stats;csv";
 
 		const csvResponse = await fetch(csvUrl.toString(), {
-			headers: {
-				Authorization: `Basic ${basicAuth}`,
-			},
+			headers,
 		});
 
 		if (!csvResponse.ok) {
@@ -1281,9 +1283,7 @@ export class HAProxyService {
 		}
 
 		const htmlResponse = await fetch(statsUrl.toString(), {
-			headers: {
-				Authorization: `Basic ${basicAuth}`,
-			},
+			headers,
 		});
 
 		if (!htmlResponse.ok) {

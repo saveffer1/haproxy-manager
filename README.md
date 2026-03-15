@@ -324,12 +324,12 @@ haproxy-manager/
 ```env
 NODE_ENV=development
 API_KEY=your-secure-api-key-here
-DATABASE_URL=postgres://postgres:password@localhost:5432/haproxy_db
+DATABASE_URL=postgres://postgres:<your-password>@localhost:5432/haproxy_db
 OTEL_URL=http://localhost:4318/v1/traces
 REDIS_URL=redis://localhost:6379
 HAPROXY_STATS_URL=http://localhost:8404/stats
-HAPROXY_STATS_USERNAME=admin
-HAPROXY_STATS_PASSWORD=admin12345
+HAPROXY_STATS_USERNAME=<your-stats-username>
+HAPROXY_STATS_PASSWORD=<your-stats-password>
 ```
 
 ## 🐳 Docker Services

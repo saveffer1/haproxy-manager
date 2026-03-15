@@ -14,8 +14,8 @@ export const env = cleanEnv(process.env, {
 	DEFAULT_NODE_SSH_USER: str({ default: "root" }),
 	DEFAULT_NODE_SSH_PORT: str({ default: "22" }),
 	HAPROXY_STATS_URL: str({ default: "http://localhost:8404/stats" }),
-	HAPROXY_STATS_USERNAME: str({ default: "admin" }),
-	HAPROXY_STATS_PASSWORD: str({ default: "admin12345" }),
+	HAPROXY_STATS_USERNAME: str({ default: "" }),
+	HAPROXY_STATS_PASSWORD: str({ default: "" }),
 	BETTER_AUTH_URL: str({ default: "http://localhost:3000" }),
 	BETTER_AUTH_TRUSTED_ORIGINS: str({
 		default:
@@ -23,9 +23,9 @@ export const env = cleanEnv(process.env, {
 	}),
 	DEFAULT_ADMIN_USERNAME: str({ default: "admin" }),
 	DEFAULT_ADMIN_EMAIL: str({ default: "admin@local.dev" }),
-	DEFAULT_ADMIN_PASSWORD: str({ default: "admin12345" }),
+	DEFAULT_ADMIN_PASSWORD: str({ default: "" }),
 	DATABASE_URL: url({
-		default: "postgres://postgres:password@localhost:5432/haproxy_db",
+		default: "postgres://postgres:changeme@localhost:5432/haproxy_db",
 	}),
 	OTEL_URL: url({ default: "http://localhost:4318/v1/traces" }),
 	REDIS_URL: url({ default: "redis://localhost:6379" }),

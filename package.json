@@ -2,11 +2,11 @@
 	"name": "haproxy-manager",
 	"version": "0.1",
 	"scripts": {
-		"dev:backend": "bun --filter @app/backend dev",
-		"dev:frontend": "bun --filter @app/frontend dev",
+		"dev:backend": "bun --filter \"@app/backend\" dev",
+		"dev:frontend": "bun --filter \"@app/frontend\" dev",
 		"dev": "bun --filter \"*\" dev",
-		"db:push": "bun --filter @app/backend db:push",
-		"db:studio": "bun --filter @app/backend db:studio",
+		"db:push": "bun --filter \"@app/backend\" db:push",
+		"db:studio": "bun --filter \"@app/backend\" db:studio",
 		"watch:haproxy": "pwsh -ExecutionPolicy Bypass -NoExit -File watch-haproxy.ps1",
 		"format": "biome format --write .",
 		"lint": "biome lint --fix ."

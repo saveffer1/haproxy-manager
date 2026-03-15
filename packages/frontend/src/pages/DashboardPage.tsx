@@ -296,8 +296,7 @@ export default function DashboardPage() {
 					const throughputInBps = latestPoint
 						? Math.max(
 								0,
-								(snapshotData.totals.bytesIn -
-									latestPoint.bytesInCounter) /
+								(snapshotData.totals.bytesIn - latestPoint.bytesInCounter) /
 									elapsedSeconds,
 							)
 						: 0;
@@ -305,8 +304,7 @@ export default function DashboardPage() {
 					const throughputOutBps = latestPoint
 						? Math.max(
 								0,
-								(snapshotData.totals.bytesOut -
-									latestPoint.bytesOutCounter) /
+								(snapshotData.totals.bytesOut - latestPoint.bytesOutCounter) /
 									elapsedSeconds,
 							)
 						: 0;
