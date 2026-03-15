@@ -51,12 +51,20 @@ services:
     restart: always
 
   haproxy:
-    image: haproxy:3.3-alpine
+    build:
+      context: .
+      dockerfile: ./haproxy/Dockerfile
     container_name: haproxy
     volumes:
       - ./haproxy/conf.d:/usr/local/etc/haproxy/conf.d:ro
       - ./haproxy/haproxy_socket:/var/run/
-    command: ["haproxy", "-f", "/usr/local/etc/haproxy/conf.d/"]
+      - ./logs/haproxy:/var/log/haproxy
+    command:
+      [
+        "sh",
+        "-lc",
+        "mkdir -p /var/log/haproxy; touch /var/log/haproxy/haproxy.log; crond; haproxy -f /usr/local/etc/haproxy/conf.d/ 2>&1 | tee -a /var/log/haproxy/haproxy.log",
+      ]
     ports:
       - "8080:8080"
       - "127.0.0.1:8404:8404"
@@ -105,6 +113,7 @@ services:
     volumes:
       - ./haproxy/conf.d:/workspace/haproxy/conf.d
       - ./packages/backend/.runtime:/workspace/packages/backend/.runtime
+      - ./logs/backend:/workspace/packages/backend/logs
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:

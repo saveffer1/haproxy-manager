@@ -63,6 +63,5 @@ export function createAuthController() {
 					endpoint: "/api/auth/sign-in/email",
 				},
 			}),
-		)
-		;
+		);
 }

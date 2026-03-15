@@ -36,20 +36,22 @@ const sessionProtectedPrefixes = ["/openapi", "/swagger", "/otel"];
 const publicRoutePrefixes = ["/", "/health"];
 
 function isSessionProtectedPath(pathname: string) {
-	return sessionProtectedPrefixes.some((prefix) =>
-		pathname === prefix || pathname.startsWith(`${prefix}/`),
+	return sessionProtectedPrefixes.some(
+		(prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
 	);
 }
 
 function isPublicRoute(pathname: string) {
-	return publicRoutePrefixes.some((prefix) =>
-		pathname === prefix || pathname.startsWith(`${prefix}/`),
+	return publicRoutePrefixes.some(
+		(prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
 	);
 }
 
 async function hasBetterAuthSession(request: Request) {
 	const authApi = auth.api as {
-		getSession: (args: { headers: Headers }) => Promise<BetterAuthSessionLookup>;
+		getSession: (args: {
+			headers: Headers;
+		}) => Promise<BetterAuthSessionLookup>;
 	};
 
 	const session = await authApi.getSession({

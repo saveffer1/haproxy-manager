@@ -5,6 +5,7 @@ A full-stack application for managing HAProxy infrastructure with real-time moni
 ## Stack Overview
 
 ### Architecture
+
 - **Monorepo**: Using Bun Workspaces for unified dependency management
 - **Backend**: ElysiaJS REST API with OpenAPI documentation
 - **Frontend**: React + Vite with type-safe API client (Eden Treaty)
@@ -23,31 +24,39 @@ A full-stack application for managing HAProxy infrastructure with real-time moni
 ## Quick Start
 
 1. **(Optional) copy env template**
+
   ```bash
   cp .env.example .env
   ```
+
   You can skip this step if defaults are fine.
 
 Environment strategy:
+
 - Use root `.env` as the single shared env source for Docker Compose.
 - Frontend build variables are injected only from `docker-compose.yml` build args.
 
-2. **Start everything**
+1. **Start everything**
+
   ```bash
   docker compose up -d --build
   ```
 
-3. **Open Web UI**
-  - http://localhost:5173
+1. **Open Web UI**
 
-4. **Login with default account**
-  - Username: `admin`
-  - Password: `admin12345`
+- URL: `http://localhost:3000`
+- API Docs: `http://localhost:3000/api/docs`
 
-5. **Default node is auto-created**
-  - Name: `docker-haproxy-localnode`
-  - Target HAProxy: `haproxy` service in compose network
-  - The seed is idempotent (won't duplicate by same name/IP)
+1. **Login with default account**
+
+- Username: `admin`
+- Password: `admin12345`
+
+1. **Default node is auto-created**
+
+- Name: `docker-haproxy-localnode`
+- Target HAProxy: `haproxy` service in compose network
+- The seed is idempotent (won't duplicate by same name/IP)
 
 ### Forgot Password (Reset via Docker Exec)
 
@@ -114,13 +123,13 @@ docker compose exec backend bun run auth:reset-admin -- --password NewStrongPass
 The HAProxy configuration is located at `./haproxy/haproxy.cfg` and includes:
 
 ### Features
+
 - **Stats Dashboard Security**: Stats endpoint is protected with basic auth and only accepts localhost source traffic
 - **In-App Stats Screen**: Dashboard page fetches stats UI via backend proxy endpoint (`/haproxy/stats/ui`)
 - **Load Balancing**: Round-robin by default
 - **Health Checks**: HTTP GET checks on configured backends
 - **Logging**: Structured HTTP logging
 - **Multiple Backends**: Support for web servers and API servers
-
 
 ## Database Migrations
 

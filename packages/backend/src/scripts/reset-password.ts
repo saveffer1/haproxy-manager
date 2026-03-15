@@ -10,7 +10,7 @@ type ResetArgs = {
 };
 
 function getArgValue(args: string[], key: string) {
-	const idx = args.findIndex((arg) => arg === key);
+	const idx = args.indexOf(key);
 	if (idx < 0) {
 		return undefined;
 	}
