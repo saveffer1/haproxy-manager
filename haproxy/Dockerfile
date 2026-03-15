@@ -3,6 +3,7 @@ FROM haproxy:3.3-alpine
 USER 0:0
 
 RUN apk add --no-cache logrotate
+RUN apk add --no-cache openssl
 
 COPY ./haproxy/logrotate.cfg /etc/logrotate.d/haproxy
 

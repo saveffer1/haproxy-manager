@@ -142,3 +142,11 @@ vite.config.ts.timestamp-*
 # haproxy socket files
 **/haproxy_socket/*
 !**/haproxy_socket/.gitkeep
+
+# local self-signed TLS certs for HAProxy service endpoints
+haproxy/certs/*
+!haproxy/certs/.gitkeep
+
+# local self-signed TLS certs for manager frontend gateway
+packages/frontend/certs/*
+!packages/frontend/certs/.gitkeep

@@ -19,9 +19,12 @@ RUN cd packages/frontend && bun run build
 
 FROM nginx:alpine
 
+RUN apk add --no-cache openssl
+
 COPY packages/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /workspace/packages/frontend/dist /usr/share/nginx/html
 
 EXPOSE 80
+EXPOSE 443
 
 CMD ["nginx", "-g", "daemon off;"]

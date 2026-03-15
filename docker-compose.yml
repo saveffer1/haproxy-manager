@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
       POSTGRES_DB: haproxy_db
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,7 +21,7 @@ services:
     image: redis:alpine
     container_name: haproxy-manager-redis
     ports:
-      - "6379:6379"
+      - "16379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -35,20 +35,11 @@ services:
     image: jaegertracing/all-in-one:latest
     container_name: haproxy-manager-jaeger
     ports:
-      - "16686:16686"
+      - "4319:16686"
       - "4318:4318"
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
-
-  nginx-helloworld:
-    image: nginx:alpine
-    container_name: nginx-helloworld
-    volumes:
-      - "./haproxy/nginx-helloworld.html:/usr/share/nginx/html/index.html:ro"
-    ports:
-      - "8081:80"
-    restart: always
 
   haproxy:
     build:
@@ -57,20 +48,16 @@ services:
     container_name: haproxy
     volumes:
       - ./haproxy/conf.d:/usr/local/etc/haproxy/conf.d:ro
+      - ./haproxy/certs:/usr/local/etc/haproxy/certs
       - ./haproxy/haproxy_socket:/var/run/
       - ./logs/haproxy:/var/log/haproxy
     command:
       [
         "sh",
         "-lc",
-        "mkdir -p /var/log/haproxy; touch /var/log/haproxy/haproxy.log; crond; haproxy -f /usr/local/etc/haproxy/conf.d/ 2>&1 | tee -a /var/log/haproxy/haproxy.log",
+        "mkdir -p /var/log/haproxy /usr/local/etc/haproxy/certs; touch /var/log/haproxy/haproxy.log; if [ ! -s /usr/local/etc/haproxy/certs/localhost.pem ]; then openssl req -x509 -nodes -newkey rsa:2048 -keyout /usr/local/etc/haproxy/certs/localhost.key -out /usr/local/etc/haproxy/certs/localhost.crt -days 3650 -subj '/CN=localhost' && cat /usr/local/etc/haproxy/certs/localhost.key /usr/local/etc/haproxy/certs/localhost.crt > /usr/local/etc/haproxy/certs/localhost.pem; fi; test -s /usr/local/etc/haproxy/certs/localhost.pem || { echo 'haproxy cert generation failed'; exit 1; }; crond; haproxy -W -db -f /usr/local/etc/haproxy/conf.d/ 2>&1 | tee -a /var/log/haproxy/haproxy.log",
       ]
-    ports:
-      - "8080:8080"
-      - "127.0.0.1:8404:8404"
-      - "127.0.0.1:16669:16669"
-    depends_on:
-      - nginx-helloworld
+    network_mode: host
     restart: always
 
   backend:
@@ -83,12 +70,12 @@ services:
       NODE_ENV: "${NODE_ENV:-production}"
       API_KEY: "${API_KEY:-haproxy-manager-local-api-key}"
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:-replace-me-in-production-please-change-this-secret}"
-      BETTER_AUTH_URL: "${BETTER_AUTH_URL:-http://localhost:3000}"
-      BETTER_AUTH_TRUSTED_ORIGINS: "${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+      BETTER_AUTH_URL: "${BETTER_AUTH_URL:-https://localhost}"
+      BETTER_AUTH_TRUSTED_ORIGINS: "${BETTER_AUTH_TRUSTED_ORIGINS:-https://localhost,https://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4320,http://127.0.0.1:4320}"
       DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/haproxy_db"
       REDIS_URL: "redis://redis:6379"
       OTEL_URL: "http://otel-collector:4318/v1/traces"
-      OTEL_DASHBOARD_URL: "${OTEL_DASHBOARD_URL:-http://otel-collector:16686}"
+      OTEL_DASHBOARD_URL: "${OTEL_DASHBOARD_URL:-http://localhost:4319}"
       DEFAULT_ADMIN_USERNAME: "${DEFAULT_ADMIN_USERNAME:-admin}"
       DEFAULT_ADMIN_EMAIL: "${DEFAULT_ADMIN_EMAIL:-admin@local.dev}"
       DEFAULT_ADMIN_PASSWORD: "${DEFAULT_ADMIN_PASSWORD:-admin12345}"
@@ -123,7 +110,7 @@ services:
       haproxy:
         condition: service_started
     ports:
-      - "3000:3000"
+      - "4320:3000"
     restart: always
 
   frontend:
@@ -131,13 +118,20 @@ services:
       context: .
       dockerfile: ./packages/frontend/Dockerfile
       args:
-        VITE_BACKEND_URL: "${VITE_BACKEND_URL:-http://localhost:3000}"
+        VITE_BACKEND_URL: "${VITE_BACKEND_URL:-}"
     container_name: haproxy-manager-frontend
+    volumes:
+      - ./packages/frontend/certs:/etc/nginx/certs
+    command:
+      [
+        "sh",
+        "-lc",
+        "mkdir -p /etc/nginx/certs; if [ ! -f /etc/nginx/certs/localhost.crt ] || [ ! -f /etc/nginx/certs/localhost.key ]; then openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/nginx/certs/localhost.key -out /etc/nginx/certs/localhost.crt -days 3650 -subj '/CN=localhost'; fi; nginx -g 'daemon off;'",
+      ]
     depends_on:
       backend:
         condition: service_started
-    ports:
-      - "5173:80"
+    network_mode: host
     restart: always
 
 volumes:

@@ -4,11 +4,13 @@ type FrontendEnv = {
 
 const defaultBackendUrl =
 	typeof window === "undefined"
-		? "http://localhost:3000"
-		: `${window.location.protocol}//${window.location.hostname}:3000`;
+		? "https://localhost"
+		: window.location.origin;
+
+const configuredBackendUrl = (import.meta.env.VITE_BACKEND_URL as
+	| string
+	| undefined)?.trim();
 
 export const env: FrontendEnv = {
-	VITE_BACKEND_URL:
-		(import.meta.env.VITE_BACKEND_URL as string | undefined) ??
-		defaultBackendUrl,
+	VITE_BACKEND_URL: configuredBackendUrl || defaultBackendUrl,
 };

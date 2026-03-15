@@ -44,7 +44,7 @@ export default defineConfig(() => {
 	const rootEnvPath = path.resolve(frontendDir, "../../.env");
 
 	const backendUrlFromBackend =
-		readEnvValue(rootEnvPath, "BETTER_AUTH_URL") ?? "http://localhost:3000";
+		readEnvValue(rootEnvPath, "BETTER_AUTH_URL") ?? "https://localhost";
 
 	const envBackendUrl = process.env.VITE_BACKEND_URL ?? backendUrlFromBackend;
 

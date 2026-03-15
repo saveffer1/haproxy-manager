@@ -44,8 +44,14 @@ Environment strategy:
 
 1. **Open Web UI**
 
-- URL: `http://localhost:3000`
-- API Docs: `http://localhost:3000/api/docs`
+- URL: `https://localhost`
+- API Docs: `https://localhost/api/docs`
+
+  The frontend gateway container auto-generates a local self-signed certificate on first run.
+  Your browser will show a certificate warning on first visit; continue to trust locally.
+
+  HAProxy still exposes a separate HTTPS endpoint for managed service traffic at `https://localhost:9443`.
+  Manager nginx and HAProxy are intentionally separated; manager availability does not depend on HAProxy process health.
 
 1. **Login with default account**
 

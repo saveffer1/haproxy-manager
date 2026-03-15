@@ -12,8 +12,8 @@ type QuickActionsProps = {
 function resolveBackendOrigin(rawBackendUrl: string) {
 	const fallback =
 		typeof window === "undefined"
-			? "http://localhost:3000"
-			: `${window.location.protocol}//${window.location.hostname}:3000`;
+			? "https://localhost"
+			: window.location.origin;
 
 	try {
 		return new URL(rawBackendUrl).origin;

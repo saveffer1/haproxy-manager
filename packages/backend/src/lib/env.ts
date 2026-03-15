@@ -25,10 +25,10 @@ export const env = cleanEnv(process.env, {
 	HAPROXY_STATS_URL: str({ default: "http://localhost:8404/stats" }),
 	HAPROXY_STATS_USERNAME: str({ default: "" }),
 	HAPROXY_STATS_PASSWORD: str({ default: "" }),
-	BETTER_AUTH_URL: str({ default: "http://localhost:3000" }),
+	BETTER_AUTH_URL: str({ default: "https://localhost" }),
 	BETTER_AUTH_TRUSTED_ORIGINS: str({
 		default:
-			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+			"https://localhost,https://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:4320,http://127.0.0.1:4320",
 	}),
 	DEFAULT_ADMIN_USERNAME: str({ default: "admin" }),
 	DEFAULT_ADMIN_EMAIL: str({ default: "admin@local.dev" }),
@@ -37,7 +37,7 @@ export const env = cleanEnv(process.env, {
 		default: "postgres://postgres:changeme@localhost:5432/haproxy_db",
 	}),
 	OTEL_URL: url({ default: "http://localhost:4318/v1/traces" }),
-	OTEL_DASHBOARD_URL: url({ default: "http://localhost:16686" }),
+	OTEL_DASHBOARD_URL: url({ default: "http://localhost:4319" }),
 	REDIS_URL: url({ default: "redis://localhost:6379" }),
 	HAPROXY_SOCKET_ENABLED: bool({ default: process.platform !== "win32" }),
 	HAPROXY_SOCKET_PATH: str({ default: "127.0.0.1:16669" }),
