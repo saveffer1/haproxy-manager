@@ -713,16 +713,24 @@ export class HAProxyService {
 			const containerName = container.names.toLowerCase();
 			const containerId = container.id.toLowerCase();
 			const image = container.image.toLowerCase();
+			const imageBase = this.normalizeImageReference(image);
 			const ports = container.ports.toLowerCase();
 
 			let score = 0;
 
 			if (configuredRef) {
-				if (containerName === configuredRef || containerId === configuredRef) {
+				if (
+					containerName === configuredRef ||
+					containerId === configuredRef ||
+					image === configuredRef ||
+					imageBase === configuredRef
+				) {
 					score += 1000;
 				} else if (
 					containerName.includes(configuredRef) ||
-					containerId.startsWith(configuredRef)
+					containerId.startsWith(configuredRef) ||
+					image.includes(configuredRef) ||
+					imageBase.includes(configuredRef)
 				) {
 					score += 800;
 				}
@@ -2013,6 +2021,26 @@ export class HAProxyService {
 		);
 	}
 
+	private normalizeImageReference(image: string) {
+		const normalized = image.trim().toLowerCase();
+		if (!normalized) {
+			return "";
+		}
+
+		const digestIndex = normalized.indexOf("@");
+		if (digestIndex > -1) {
+			return normalized.slice(0, digestIndex);
+		}
+
+		const lastSlash = normalized.lastIndexOf("/");
+		const lastColon = normalized.lastIndexOf(":");
+		if (lastColon > lastSlash) {
+			return normalized.slice(0, lastColon);
+		}
+
+		return normalized;
+	}
+
 	private resolveLogContainer(
 		containers: DockerContainerListItem[],
 		requestedRef?: string,
@@ -2030,7 +2058,14 @@ export class HAProxyService {
 			const exact = containers.filter((container) => {
 				const name = container.name.toLowerCase();
 				const id = container.id.toLowerCase();
-				return name === normalizedRef || id === normalizedRef;
+				const image = container.image.toLowerCase();
+				const imageBase = this.normalizeImageReference(image);
+				return (
+					name === normalizedRef ||
+					id === normalizedRef ||
+					image === normalizedRef ||
+					imageBase === normalizedRef
+				);
 			});
 
 			if (exact.length === 1 && exact[0]) {
@@ -2040,7 +2075,14 @@ export class HAProxyService {
 			const partial = containers.filter((container) => {
 				const name = container.name.toLowerCase();
 				const id = container.id.toLowerCase();
-				return name.includes(normalizedRef) || id.startsWith(normalizedRef);
+				const image = container.image.toLowerCase();
+				const imageBase = this.normalizeImageReference(image);
+				return (
+					name.includes(normalizedRef) ||
+					id.startsWith(normalizedRef) ||
+					image.includes(normalizedRef) ||
+					imageBase.includes(normalizedRef)
+				);
 			});
 
 			if (partial.length === 1 && partial[0]) {
@@ -2257,7 +2299,15 @@ export class HAProxyService {
 			const matched = haproxyContainers.filter((container) => {
 				const name = container.name.toLowerCase();
 				const id = container.id.toLowerCase();
-				return name === normalizedRef || id.startsWith(normalizedRef);
+				const image = container.image.toLowerCase();
+				const imageBase = this.normalizeImageReference(image);
+				return (
+					name === normalizedRef ||
+					id.startsWith(normalizedRef) ||
+					image === normalizedRef ||
+					imageBase === normalizedRef ||
+					image.includes(normalizedRef)
+				);
 			});
 
 			if (matched.length === 1 && matched[0]) {
