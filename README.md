@@ -18,6 +18,7 @@ A full-stack application for managing HAProxy infrastructure with real-time moni
 - **Bun** (v1.0+) - [Install](https://bun.sh)
 - **Docker** & **Docker Compose** - [Install](https://www.docker.com/products/docker-desktop)
 - **Git** - For version control
+- **SSH Client** - For remote server management (optional)
 
 ## Quick Start
 
