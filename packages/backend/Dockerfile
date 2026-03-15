@@ -2,7 +2,7 @@ FROM oven/bun:1-alpine
 
 USER 0:0
 
-RUN apk add --no-cache docker-cli logrotate
+RUN apk add --no-cache docker-cli logrotate openssh-client
 
 WORKDIR /workspace
 
