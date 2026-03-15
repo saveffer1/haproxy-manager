@@ -89,7 +89,8 @@ services:
       DEFAULT_NODE_HAPROXY_STATS_URL: "${DEFAULT_NODE_HAPROXY_STATS_URL}"
       DEFAULT_NODE_HAPROXY_SOCKET_PATH: "${DEFAULT_NODE_HAPROXY_SOCKET_PATH}"
       DEFAULT_NODE_HAPROXY_API_URL: "${DEFAULT_NODE_HAPROXY_API_URL}"
-      DEFAULT_NODE_HAPROXY_CONFIG_PATH: "${DEFAULT_NODE_HAPROXY_CONFIG_PATH}"
+      DEFAULT_NODE_HAPROXY_CONFIG_PATH: "${DEFAULT_NODE_HAPROXY_CONFIG_PATH:-${BACKEND_HAPROXY_CONFIG_PATH:-/workspace/haproxy/conf.d}}"
+      DEFAULT_NODE_HAPROXY_LOG_PATH: "${DEFAULT_NODE_HAPROXY_LOG_PATH:-${BACKEND_HAPROXY_LOG_PATH:-/workspace/logs/haproxy}}"
       HAPROXY_STATS_URL: "${HAPROXY_STATS_URL}"
       HAPROXY_SOCKET_ENABLED: "${HAPROXY_SOCKET_ENABLED}"
       HAPROXY_SOCKET_PATH: "${HAPROXY_SOCKET_PATH}"
@@ -98,7 +99,8 @@ services:
       HAPROXY_VALIDATE_COMMAND: "${HAPROXY_VALIDATE_COMMAND}"
       SSH_KEY_DIR: "${SSH_KEY_DIR}"
     volumes:
-      - ./haproxy/conf.d:/workspace/haproxy/conf.d
+      - ./haproxy/conf.d:${BACKEND_HAPROXY_CONFIG_PATH:-/workspace/haproxy/conf.d}
+      - ./logs/haproxy:${BACKEND_HAPROXY_LOG_PATH:-/workspace/logs/haproxy}
       - ./packages/backend/.runtime:/workspace/packages/backend/.runtime
       - ./logs/backend:/workspace/packages/backend/logs
       - /var/run/docker.sock:/var/run/docker.sock
